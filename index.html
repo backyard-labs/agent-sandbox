@@ -80,7 +80,32 @@
       </div>
 
       <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-        <!-- Mode pill: opens the runtime settings drawer -->
+        <!-- Operational mode: segmented pill toggle, commits immediately -->
+        <div
+          id="navModeToggle"
+          role="radiogroup"
+          aria-label="Operational mode"
+          class="inline-flex items-center rounded-full border border-slate-300 bg-white/70 p-0.5 dark:border-slate-700 dark:bg-slate-900/40"
+        >
+          <button
+            id="navModeMock"
+            type="button"
+            role="radio"
+            aria-checked="true"
+            title="Built-in offline mock agent — no network calls"
+            class="rounded-full px-2.5 py-1 font-medium transition bg-indigo-600 text-white shadow-sm dark:bg-cyan-400 dark:text-slate-950"
+          >Mock</button>
+          <button
+            id="navModeLive"
+            type="button"
+            role="radio"
+            aria-checked="false"
+            title="Post prompts to your configured OpenAI-compatible endpoint"
+            class="rounded-full px-2.5 py-1 font-medium transition text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+          >Live</button>
+        </div>
+
+        <!-- Model settings button: opens the runtime configuration drawer -->
         <button
           id="modePill"
           type="button"
@@ -89,8 +114,7 @@
           title="Configure runtime settings"
           class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white/70 px-2.5 py-1 font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
         >
-          <span id="modePillDot" aria-hidden="true" class="text-[10px] leading-none text-emerald-500 animate-pulse dark:text-emerald-400">○</span>
-          <span id="modePillLabel">MOCK · Offline</span>
+          <span id="modePillLabel">gpt-4o-mini</span>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5 opacity-70">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -287,6 +311,10 @@
         <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium text-slate-800 dark:text-slate-200">Output</span>
+            <span
+              id="modeBadge"
+              class="text-[11px] px-2 py-0.5 rounded-full border font-medium border-slate-300 text-slate-500 bg-slate-500/10 dark:border-slate-700 dark:text-slate-400"
+            >Mock mode</span>
             <span id="statusBadge" class="hidden text-[11px] px-2 py-0.5 rounded-full border"></span>
           </div>
           <div class="flex items-center gap-2">
@@ -655,6 +683,7 @@
       sysCount: document.getElementById('sysCount'),
       promptCount: document.getElementById('promptCount'),
       status: document.getElementById('statusBadge'),
+      modeBadge: document.getElementById('modeBadge'),
       togglePretty: document.getElementById('togglePretty'),
       themeToggle: document.getElementById('themeToggle'),
       themeLabel: document.getElementById('themeLabel'),
@@ -668,9 +697,11 @@
       renameSessionBtn: document.getElementById('renameSessionBtn'),
       deleteSessionBtn: document.getElementById('deleteSessionBtn'),
 
-      // Header mode pill (doubles as the drawer trigger)
+      // Header: mode segmented toggle + model settings capsule
+      navModeToggle: document.getElementById('navModeToggle'),
+      navModeMock: document.getElementById('navModeMock'),
+      navModeLive: document.getElementById('navModeLive'),
       modePill: document.getElementById('modePill'),
-      modePillDot: document.getElementById('modePillDot'),
       modePillLabel: document.getElementById('modePillLabel'),
 
       // Settings drawer
@@ -732,6 +763,19 @@
 
     const MODE_ON = ['border-indigo-500', 'bg-indigo-500/10', 'text-indigo-600', 'dark:border-indigo-400', 'dark:text-indigo-300'];
     const MODE_OFF = ['border-slate-300', 'text-slate-600', 'dark:border-slate-700', 'dark:text-slate-300'];
+
+    // Navbar segmented mode toggle. The active segment gets a filled pill in
+    // both themes: indigo on light, cyan on dark.
+    const NAV_MODE_ON = ['bg-indigo-600', 'text-white', 'shadow-sm', 'dark:bg-cyan-400', 'dark:text-slate-950'];
+    const NAV_MODE_OFF = ['text-slate-500', 'hover:text-slate-900', 'dark:text-slate-400', 'dark:hover:text-white'];
+
+    // Output-panel mode badge styling: muted when offline, amber when live but
+    // unkeyed, cyan accent when live and ready.
+    const MODE_BADGE = {
+      mock: ['border-slate-300', 'text-slate-500', 'bg-slate-500/10', 'dark:border-slate-700', 'dark:text-slate-400'],
+      needsKey: ['border-amber-500/50', 'text-amber-600', 'bg-amber-500/10', 'dark:border-amber-500/40', 'dark:text-amber-300'],
+      ready: ['border-cyan-500/50', 'text-cyan-600', 'bg-cyan-500/10', 'dark:border-cyan-500/40', 'dark:text-cyan-300'],
+    };
 
     function isLive() {
       return config.mode === 'live';
@@ -1509,7 +1553,8 @@
         if (!v.baseUrl) errors.push('Base URL is required in live mode.');
         else if (!/^https?:\/\//i.test(v.baseUrl)) errors.push('Base URL must start with http:// or https://.');
         if (!v.model) errors.push('Model name is required in live mode.');
-        if (!v.apiKey) errors.push('API key is required in live mode.');
+        // A key is deliberately NOT required here. Clearing the key must still
+        // save, so the key requirement lives in validateConfig() — the Run gate.
         if (typeof location !== 'undefined' && location.protocol === 'https:' && /^http:\/\//i.test(v.baseUrl)) {
           errors.push('An HTTPS page cannot call an HTTP base URL (mixed content is blocked).');
         }
@@ -1533,8 +1578,11 @@
       return errors;
     }
 
+    // Run-time gate. In live mode a usable key is mandatory before dispatch.
+    // This block lives HERE (not in validateValues) so that clearing the key can
+    // still be saved, and only Run Agent refuses to fire.
     function validateConfig() {
-      return validateValues({
+      const errors = validateValues({
         mode: config.mode,
         baseUrl: normalizeBaseUrl(config.baseUrl),
         model: config.model,
@@ -1543,6 +1591,12 @@
         timeoutMs: config.timeoutMs,
         maxSteps: config.maxSteps,
       });
+
+      if (config.mode === 'live' && !(config.apiKey || '').trim()) {
+        errors.push('API key is required in live mode.');
+      }
+
+      return errors;
     }
 
     function showConfigError(msg, kind) {
@@ -1582,7 +1636,7 @@
       refreshModeUI();
       updatePreview();
       showConfigError('');
-      setStatus(v.mode === 'live' ? 'Live mode armed' : 'Mock mode', 'info');
+      setStatus('Settings saved', 'ok');
       closeDrawer();
     }
 
@@ -1596,31 +1650,76 @@
     }
 
     // ---------------------------------------------------------------------
-    // Header pill / live-vs-mock visual state
+    // Header: mode segmented toggle + model settings capsule
     // ---------------------------------------------------------------------
+    function paintNavMode(mode) {
+      const paint = (btn, on) => {
+        NAV_MODE_ON.forEach((c) => btn.classList.toggle(c, on));
+        NAV_MODE_OFF.forEach((c) => btn.classList.toggle(c, !on));
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      };
+
+      paint(el.navModeMock, mode !== 'live');
+      paint(el.navModeLive, mode === 'live');
+    }
+
+    // Output-panel mode badge. Three states, driven by the committed mode plus
+    // whether an API key is present in memory.
+    function paintModeBadge() {
+      const live = isLive();
+      const hasKey = !!(config.apiKey || '').trim();
+      const state = !live ? 'mock' : (hasKey ? 'ready' : 'needsKey');
+
+      el.modeBadge.textContent = !live
+        ? 'Mock mode'
+        : (hasKey ? 'Live Ready' : 'Live (Needs Key)');
+
+      Object.keys(MODE_BADGE).forEach((key) => {
+        MODE_BADGE[key].forEach((c) => el.modeBadge.classList.toggle(c, key === state));
+      });
+
+      el.modeBadge.title = !live
+        ? 'Offline mock mode — no network requests are made.'
+        : (hasKey
+          ? 'Live mode is armed and an API key is present for this session.'
+          : 'Live mode is armed but no API key is set. Open settings to add one.');
+    }
+
+    // Commit a mode change straight from the navbar — no drawer round-trip.
+    // Persists the runtime config and keeps the drawer radios, the preview and
+    // the status badge in sync.
+    function commitMode(mode) {
+      const next = mode === 'live' ? 'live' : 'mock';
+
+      if (config.mode !== next) {
+        config.mode = next;
+        saveConfig();
+      }
+
+      // paintModeButtons() also repaints the navbar toggle, the Output mode
+      // badge and the request preview via refreshModeUI().
+      paintModeButtons(next);
+      updatePreview();
+      setStatus(next === 'live' ? 'Live mode selected' : 'Mock mode selected', 'info');
+    }
+
     function refreshModeUI() {
       const live = isLive();
-      const dark = document.documentElement.classList.contains('dark');
 
-      // While the drawer is open the pill previews the PENDING selection so the
-      // header flips immediately on toggle, before Apply is pressed.
-      const pillLive = drawerOpen ? pendingMode === 'live' : live;
+      // The segmented toggle is the single mode indicator. While the drawer is
+      // open it previews the PENDING selection so the navbar flips immediately
+      // on toggle, before Apply is pressed.
+      paintNavMode(drawerOpen ? pendingMode : config.mode);
 
-      // Inline colours avoid depending on runtime-generated utility classes.
-      el.modePillDot.style.color = pillLive
-        ? (dark ? '#38bdf8' : '#0ea5e9')
-        : (dark ? '#34d399' : '#10b981');
-      el.modePillDot.classList.toggle('animate-pulse', !pillLive);
-      el.modePill.style.borderColor = pillLive ? 'rgba(14,165,233,0.55)' : '';
+      // The Output badge tracks the COMMITTED mode + API key presence, so it
+      // refreshes on navbar toggles, Apply and Reset.
+      paintModeBadge();
 
-      // Capsule reads "● LIVE · <model>" or "○ MOCK · Offline" (gear follows).
-      el.modePillDot.textContent = pillLive ? '●' : '○';
-      el.modePillLabel.textContent = pillLive
-        ? 'LIVE · ' + (config.model || 'Live backend')
-        : 'MOCK · Offline';
-      el.modePill.title = pillLive
-        ? 'Live backend: ' + normalizeBaseUrl(config.baseUrl) + ' — click to configure'
-        : 'Offline mock mode — click to configure';
+      // The capsule is a settings affordance: it names the configured model and
+      // opens the runtime configuration drawer.
+      el.modePillLabel.textContent = config.model || DEFAULT_CONFIG.model;
+      el.modePill.title = 'Runtime settings — ' + (config.model || DEFAULT_CONFIG.model) +
+        ' @ ' + normalizeBaseUrl(config.baseUrl) + ' (click to edit)';
 
       el.previewModeLabel.textContent = live ? 'live' : 'mock';
       el.previewModeLabel.style.color = live ? '#0ea5e9' : '';
@@ -2567,6 +2666,10 @@
       paintModeButtons('live');
       showConfigError('');
     });
+
+    // Navbar segmented mode toggle: commits immediately, no Apply required.
+    el.navModeMock.addEventListener('click', () => commitMode('mock'));
+    el.navModeLive.addEventListener('click', () => commitMode('live'));
 
     el.cfgKeyToggle.addEventListener('click', () => {
       const showing = el.cfgApiKey.type === 'text';
