@@ -217,7 +217,20 @@
               >
                 Clear History
               </button>
-              <span id="historyCount" class="ml-auto self-center text-xs font-mono text-slate-400 dark:text-slate-500">History: 0 messages</span>
+              <button
+                id="historyCount"
+                type="button"
+                title="Inspect conversation history"
+                aria-haspopup="dialog"
+                aria-controls="historyPanel"
+                class="ml-auto inline-flex items-center gap-1.5 self-center rounded-full border border-slate-300 px-2.5 py-1 text-xs font-mono text-slate-500 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <path d="m21 21-4.3-4.3"></path>
+                </svg>
+                <span id="historyCountLabel">History: 0 messages</span>
+              </button>
             </div>
           </div>
         </div>
@@ -499,6 +512,57 @@
     </aside>
   </div>
 
+  <!-- ===================================================================
+       Conversation History Inspector (side drawer)
+       =================================================================== -->
+  <div id="historyOverlay" class="settings-overlay is-closed fixed inset-0 z-50">
+    <div
+      id="historyBackdrop"
+      class="absolute inset-0 bg-slate-950/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+    ></div>
+
+    <aside
+      id="historyPanel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="historyTitle"
+      class="absolute right-0 top-0 flex h-full w-full max-w-2xl translate-x-full flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-indigo-500 dark:text-indigo-400">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <h2 id="historyTitle" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Conversation History Inspector</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            id="historyCopyAll"
+            type="button"
+            class="rounded-md border border-slate-300 px-2.5 py-1 text-[11px] text-slate-500 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+          >Copy All JSON</button>
+          <button
+            id="historyClearAll"
+            type="button"
+            class="rounded-md border border-slate-300 px-2.5 py-1 text-[11px] text-slate-500 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+          >Clear</button>
+          <button
+            id="historyClose"
+            type="button"
+            aria-label="Close history inspector"
+            class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5">
+              <path d="M18 6 6 18M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="historyList" class="scroll-thin flex-1 space-y-3 overflow-y-auto px-5 py-4 text-xs"></div>
+    </aside>
+  </div>
+
   <script>
     // ---------------------------------------------------------------------
     // Agent Sandbox — mock / live prompt & tool-call tester
@@ -514,6 +578,14 @@
       copy: document.getElementById('copyBtn'),
       clearHistoryBtn: document.getElementById('clearHistoryBtn'),
       historyCount: document.getElementById('historyCount'),
+      historyCountLabel: document.getElementById('historyCountLabel'),
+      historyOverlay: document.getElementById('historyOverlay'),
+      historyBackdrop: document.getElementById('historyBackdrop'),
+      historyPanel: document.getElementById('historyPanel'),
+      historyClose: document.getElementById('historyClose'),
+      historyClearAll: document.getElementById('historyClearAll'),
+      historyCopyAll: document.getElementById('historyCopyAll'),
+      historyList: document.getElementById('historyList'),
       output: document.getElementById('output'),
       telemetryBar: document.getElementById('telemetryBar'),
       tmLatency: document.getElementById('tmLatency'),
@@ -1864,9 +1936,12 @@
 
     // Reflect the current conversation length in the controls bar.
     function updateHistoryUI() {
-      if (!el.historyCount) return;
       const n = conversationHistory.length;
-      el.historyCount.textContent = 'History: ' + n + ' message' + (n === 1 ? '' : 's');
+      if (el.historyCountLabel) {
+        el.historyCountLabel.textContent = 'History: ' + n + ' message' + (n === 1 ? '' : 's');
+      }
+      // Keep the inspector in sync whenever it is open.
+      if (historyOpen) renderHistoryInspector();
     }
 
     // Reset multi-turn state.
@@ -1875,6 +1950,133 @@
       updateHistoryUI();
       updatePreview();
       setStatus('History cleared', 'info');
+    }
+
+    // ---------------------------------------------------------------------
+    // Conversation History Inspector
+    // ---------------------------------------------------------------------
+    let historyOpen = false;
+
+    const ROLE_BADGES = {
+      system: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
+      user: 'bg-sky-500/15 text-sky-600 dark:text-sky-300',
+      assistant: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300',
+      tool: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
+    };
+
+    function estimateTokens(str) {
+      return Math.ceil(String(str || '').length / 4);
+    }
+
+    function messageText(m) {
+      if (!m) return '';
+      if (typeof m.content === 'string' && m.content) return m.content;
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length) {
+        return JSON.stringify(m.tool_calls);
+      }
+      return '';
+    }
+
+    // Build one inspector card for a message (with a delete control).
+    function historyCard(m, index) {
+      const role = (m && m.role) || 'unknown';
+      const text = messageText(m);
+      const chars = text.length;
+      const tokens = estimateTokens(text);
+
+      const card = document.createElement('div');
+      card.className = 'rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40';
+
+      const head = document.createElement('div');
+      head.className = 'flex items-center justify-between gap-2';
+
+      const left = document.createElement('div');
+      left.className = 'flex items-center gap-2';
+      const badge = document.createElement('span');
+      badge.className = 'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ' +
+        (ROLE_BADGES[role] || 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200');
+      badge.textContent = role;
+      left.appendChild(badge);
+
+      const meta = document.createElement('span');
+      meta.className = 'text-[10px] font-mono text-slate-400 dark:text-slate-500';
+      meta.textContent = '#' + index + ' \u00b7 ' + chars + ' chars \u00b7 ~' + tokens + ' tok';
+      left.appendChild(meta);
+      head.appendChild(left);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.title = 'Delete this message';
+      del.className = 'inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[10px] text-slate-500 transition hover:border-rose-400 hover:text-rose-500 dark:border-slate-700 dark:text-slate-400';
+      del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path></svg>Delete';
+      del.addEventListener('click', () => deleteHistoryMessage(index));
+      head.appendChild(del);
+
+      card.appendChild(head);
+
+      const pre = document.createElement('pre');
+      pre.className = 'scroll-thin mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-2 text-[11px] font-mono leading-relaxed text-slate-700 dark:bg-slate-900 dark:text-slate-300';
+      const body = text || (typeof m.content === 'string' ? m.content : '');
+      pre.textContent = body || '(empty)';
+      card.appendChild(pre);
+
+      return card;
+    }
+
+    // Re-render the whole inspector list from conversationHistory.
+    function renderHistoryInspector() {
+      if (!el.historyList) return;
+      el.historyList.innerHTML = '';
+
+      if (!conversationHistory.length) {
+        const empty = document.createElement('p');
+        empty.className = 'text-slate-400 dark:text-slate-500';
+        empty.textContent = 'No messages in the conversation history yet.';
+        el.historyList.appendChild(empty);
+        return;
+      }
+
+      conversationHistory.forEach((m, i) => {
+        el.historyList.appendChild(historyCard(m, i));
+      });
+    }
+
+    function openHistory() {
+      historyOpen = true;
+      renderHistoryInspector();
+      el.historyOverlay.classList.remove('is-closed');
+      el.historyBackdrop.classList.remove('opacity-0', 'pointer-events-none');
+      el.historyPanel.classList.remove('translate-x-full');
+      setTimeout(() => { try { el.historyClose.focus(); } catch (e) {} }, 60);
+    }
+
+    function closeHistory() {
+      if (!historyOpen) return;
+      historyOpen = false;
+      el.historyBackdrop.classList.add('opacity-0', 'pointer-events-none');
+      el.historyPanel.classList.add('translate-x-full');
+      el.historyOverlay.classList.add('is-closed');
+      try { el.historyCount.focus(); } catch (e) {}
+    }
+
+    // Excise a single message, keeping the history and UI in sync.
+    function deleteHistoryMessage(index) {
+      if (index < 0 || index >= conversationHistory.length) return;
+      conversationHistory.splice(index, 1);
+      updateHistoryUI();
+      renderHistoryInspector();
+      updatePreview();
+      setStatus('Message deleted', 'info');
+    }
+
+    // Copy the entire raw messages array for debugging.
+    async function copyAllHistory() {
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(conversationHistory, null, 2));
+        setStatus('History JSON copied', 'ok');
+      } catch (e) {
+        setStatus('Copy failed', 'warn');
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -1981,6 +2183,16 @@
     el.downloadBtn.addEventListener('click', downloadJson);
     el.copyMdBtn.addEventListener('click', copyMarkdown);
 
+    // Conversation History Inspector controls
+    el.historyCount.addEventListener('click', openHistory);
+    el.historyClose.addEventListener('click', closeHistory);
+    el.historyBackdrop.addEventListener('click', closeHistory);
+    el.historyCopyAll.addEventListener('click', copyAllHistory);
+    el.historyClearAll.addEventListener('click', () => {
+      clearHistory();
+      renderHistoryInspector();
+    });
+
     ['input', 'change'].forEach((evt) => {
       el.system.addEventListener(evt, updatePreview);
       el.prompt.addEventListener(evt, updatePreview);
@@ -1991,6 +2203,11 @@
     // Keyboard: Escape closes the drawer / cancels a run; Ctrl+Enter runs.
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (historyOpen) {
+          e.preventDefault();
+          closeHistory();
+          return;
+        }
         if (drawerOpen) {
           e.preventDefault();
           closeDrawer();
