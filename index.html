@@ -1,0 +1,1636 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Sandbox — Prompt & Tool Call Tester</title>
+  <script>
+    // Apply saved theme before paint to avoid a flash of the wrong theme.
+    (function () {
+      try {
+        var saved = localStorage.getItem('agent-sandbox-theme');
+        var root = document.documentElement;
+        if (saved === 'light') root.classList.remove('dark');
+        else root.classList.add('dark');
+      } catch (e) {}
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ink: {
+              900: '#0b1020',
+              800: '#111827',
+              700: '#1f2937',
+            },
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html { color-scheme: light; }
+    html.dark { color-scheme: dark; }
+
+    /* Subtle scrollbar styling for panels */
+    .scroll-thin::-webkit-scrollbar { width: 10px; height: 10px; }
+    .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+    .scroll-thin::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.45);
+      border-radius: 9999px;
+      border: 2px solid transparent;
+      background-clip: content-box;
+    }
+    .scroll-thin::-webkit-scrollbar-thumb:hover { background-color: rgba(148, 163, 184, 0.75); }
+
+    /* Smooth theme transition */
+    body, header, section, pre, textarea, input, select, button {
+      transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+    }
+
+    /* Settings drawer: keep the closed panel out of the tab order while
+       still allowing the slide/fade animation to finish first. */
+    .settings-overlay { transition: visibility 0s linear 0s; }
+    .settings-overlay.is-closed { visibility: hidden; transition: visibility 0s linear 300ms; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .settings-overlay,
+      #settingsBackdrop,
+      #settingsDrawer { transition: none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+  <!-- Header -->
+  <header class="border-b border-slate-200 bg-white/80 backdrop-blur sticky top-0 z-10 dark:border-slate-800 dark:bg-slate-900/60">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-400 grid place-items-center font-bold text-slate-950">A</div>
+        <div>
+          <h1 class="text-lg font-semibold leading-tight">Agent Sandbox</h1>
+          <p class="text-xs text-slate-500 dark:text-slate-400">Test prompts & mock tool calls</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <!-- Mode pill: opens the runtime settings drawer -->
+        <button
+          id="modePill"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="settingsDrawer"
+          title="Configure runtime settings"
+          class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white/70 px-2.5 py-1 font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+        >
+          <span id="modePillDot" class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse dark:bg-emerald-400"></span>
+          <span id="modePillLabel">Offline mock mode</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5 opacity-70">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+
+        <!-- Theme toggle -->
+        <button
+          id="themeToggle"
+          type="button"
+          aria-label="Toggle color theme"
+          title="Toggle light / dark theme"
+          class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white/70 px-3 py-1 font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+        >
+          <!-- Sun: shown in dark mode (click -> light) -->
+          <svg id="iconSun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          </svg>
+          <!-- Moon: shown in light mode (click -> dark) -->
+          <svg id="iconMoon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3.5 w-3.5 hidden">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"></path>
+          </svg>
+          <span id="themeLabel">Light</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- LEFT: Inputs -->
+      <section class="space-y-6">
+        <!-- System Instructions -->
+        <div class="rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900/50 dark:shadow-black/20">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+            <label for="systemInstructions" class="text-sm font-medium text-slate-800 dark:text-slate-200">System Instructions</label>
+            <span id="sysCount" class="text-xs text-slate-400 font-mono dark:text-slate-500">0 chars</span>
+          </div>
+          <div class="p-4">
+            <textarea
+              id="systemInstructions"
+              rows="6"
+              spellcheck="false"
+              placeholder="You are a helpful agent that can search the web and run code..."
+              class="scroll-thin w-full resize-y rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none p-3 text-sm font-mono text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+            >You are a helpful reasoning agent. Use the available tools when needed, then answer clearly.</textarea>
+          </div>
+        </div>
+
+        <!-- Prompt -->
+        <div class="rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900/50 dark:shadow-black/20">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+            <label for="promptInput" class="text-sm font-medium text-slate-800 dark:text-slate-200">Prompt</label>
+            <span id="promptCount" class="text-xs text-slate-400 font-mono dark:text-slate-500">0 chars</span>
+          </div>
+          <div class="p-4 space-y-3">
+            <textarea
+              id="promptInput"
+              rows="4"
+              spellcheck="false"
+              placeholder="Ask the agent something, e.g. 'What is the latest population of Tokyo?'"
+              class="scroll-thin w-full resize-y rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none p-3 text-sm text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+            >Find the latest population of Tokyo and compute how many people that is per square kilometer.</textarea>
+
+            <!-- Mock tool selector -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="toolSelect" class="block text-xs font-medium text-slate-500 mb-1.5 dark:text-slate-400">Mock Tool</label>
+                <select
+                  id="toolSelect"
+                  class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm text-slate-800 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200"
+                >
+                  <option value="none">None (no tool)</option>
+                  <option value="web_search">Web Search</option>
+                  <option value="code_interpreter">Code Interpreter</option>
+                  <option value="sql_query">SQL Query</option>
+                </select>
+              </div>
+              <div>
+                <label for="toolArg" class="block text-xs font-medium text-slate-500 mb-1.5 dark:text-slate-400">Tool Argument</label>
+                <input
+                  id="toolArg"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="e.g. query / code / url"
+                  class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                id="runBtn"
+                class="inline-flex items-center gap-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm px-4 py-2 transition dark:text-slate-950"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4"><path d="M8 5v14l11-7z"/></svg>
+                Run Agent
+              </button>
+              <button
+                id="cancelBtn"
+                type="button"
+                class="hidden items-center gap-2 rounded-lg border border-amber-400/70 text-amber-600 text-sm px-4 py-2 transition hover:border-amber-500 hover:text-amber-700 dark:border-amber-500/40 dark:text-amber-300 dark:hover:text-amber-200"
+              >
+                Cancel
+              </button>
+              <button
+                id="clearBtn"
+                class="inline-flex items-center gap-2 rounded-lg border border-slate-300 hover:border-slate-400 text-slate-600 text-sm px-4 py-2 transition hover:text-slate-900 dark:border-slate-700 dark:hover:border-slate-500 dark:text-slate-300 dark:hover:text-white"
+              >
+                Clear All
+              </button>
+              <button
+                id="copyBtn"
+                class="inline-flex items-center gap-2 rounded-lg border border-slate-300 hover:border-slate-400 text-slate-600 text-sm px-4 py-2 transition hover:text-slate-900 dark:border-slate-700 dark:hover:border-slate-500 dark:text-slate-300 dark:hover:text-white"
+              >
+                Copy JSON
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Raw request preview -->
+        <div class="rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900/50 dark:shadow-black/20">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+            <span class="text-sm font-medium text-slate-800 dark:text-slate-200">Request Preview</span>
+            <span id="previewModeLabel" class="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">mock</span>
+          </div>
+          <pre id="requestPreview" class="scroll-thin max-h-64 overflow-auto p-4 text-xs font-mono text-slate-700 whitespace-pre dark:text-slate-300"></pre>
+        </div>
+      </section>
+
+      <!-- RIGHT: Output -->
+      <section class="rounded-xl border border-slate-200 bg-white shadow-lg shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900/50 dark:shadow-black/20 flex flex-col min-h-[24rem]">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-slate-800 dark:text-slate-200">Output</span>
+            <span id="statusBadge" class="hidden text-[11px] px-2 py-0.5 rounded-full border"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="togglePretty" class="text-xs text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md px-2 py-1 transition dark:text-slate-400 dark:hover:text-slate-200 dark:border-slate-700">Raw / Pretty</button>
+          </div>
+        </div>
+        <pre id="output" class="scroll-thin flex-1 overflow-auto p-4 text-xs sm:text-[13px] font-mono leading-relaxed whitespace-pre text-slate-800 min-h-[20rem] dark:text-slate-200">// Output will appear here as formatted JSON.</pre>
+      </section>
+
+    </div>
+
+    <p id="footerNote" class="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
+      Agent Sandbox · Mock environment for testing prompts and tool calls. No network requests are made.
+    </p>
+  </main>
+
+  <!-- ===================================================================
+       Runtime configuration drawer
+       =================================================================== -->
+  <div id="settingsOverlay" class="settings-overlay is-closed fixed inset-0 z-40">
+    <div
+      id="settingsBackdrop"
+      class="absolute inset-0 bg-slate-950/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+    ></div>
+
+    <aside
+      id="settingsDrawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settingsTitle"
+      class="absolute right-0 top-0 flex h-full w-full max-w-md translate-x-full flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-indigo-500 dark:text-indigo-400">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <h2 id="settingsTitle" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Runtime Configuration</h2>
+        </div>
+        <button
+          id="settingsClose"
+          type="button"
+          aria-label="Close settings"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5">
+            <path d="M18 6 6 18M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <form id="settingsForm" class="flex min-h-0 flex-1 flex-col">
+        <div class="scroll-thin flex-1 space-y-5 overflow-y-auto px-5 py-4">
+
+          <!-- Mode -->
+          <div>
+            <span class="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Mode</span>
+            <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Run mode">
+              <button
+                id="modeMockBtn"
+                type="button"
+                role="radio"
+                aria-checked="true"
+                class="rounded-lg border px-3 py-2 text-xs font-medium transition border-indigo-500 bg-indigo-500/10 text-indigo-600 dark:border-indigo-400 dark:text-indigo-300"
+              >Offline mock</button>
+              <button
+                id="modeLiveBtn"
+                type="button"
+                role="radio"
+                aria-checked="false"
+                class="rounded-lg border px-3 py-2 text-xs font-medium transition border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300"
+              >Live backend</button>
+            </div>
+            <p class="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+              Mock mode never touches the network. Live mode posts to your OpenAI-compatible endpoint.
+            </p>
+          </div>
+
+          <!-- Base URL -->
+          <div>
+            <label for="cfgBaseUrl" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Custom API Base URL</label>
+            <input
+              id="cfgBaseUrl"
+              type="url"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="https://api.openai.com/v1"
+              class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+            />
+            <p class="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+              Usually ends in <code>/v1</code>. <code>/chat/completions</code> is appended automatically.
+            </p>
+          </div>
+
+          <!-- Model -->
+          <div>
+            <label for="cfgModel" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Model Name</label>
+            <input
+              id="cfgModel"
+              type="text"
+              list="modelSuggestions"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="gpt-4o-mini"
+              class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+            />
+            <datalist id="modelSuggestions">
+              <option value="gpt-4o-mini"></option>
+              <option value="gpt-4o"></option>
+              <option value="gpt-4.1-mini"></option>
+              <option value="o4-mini"></option>
+              <option value="llama-3.1-8b-instruct"></option>
+              <option value="qwen2.5-7b-instruct"></option>
+            </datalist>
+          </div>
+
+          <!-- API key -->
+          <div>
+            <label for="cfgApiKey" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">API Key</label>
+            <div class="relative">
+              <input
+                id="cfgApiKey"
+                type="password"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                placeholder="sk-…"
+                class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none pl-3 pr-16 py-2 text-sm font-mono text-slate-800 placeholder-slate-400 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200 dark:placeholder-slate-600"
+              />
+              <button
+                id="cfgKeyToggle"
+                type="button"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-500 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+              >Show</button>
+            </div>
+            <p class="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+              Held in memory only. Never written to localStorage, and cleared on reload.
+            </p>
+          </div>
+
+          <!-- Numeric params -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="cfgTemperature" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Temperature</label>
+              <input
+                id="cfgTemperature"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200"
+              />
+            </div>
+            <div>
+              <label for="cfgTimeout" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Timeout (ms)</label>
+              <input
+                id="cfgTimeout"
+                type="number"
+                min="1000"
+                max="300000"
+                step="1000"
+                class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200"
+              />
+            </div>
+          </div>
+
+          <!-- Streaming -->
+          <label
+            for="cfgStream"
+            class="flex items-start gap-3 rounded-lg border border-slate-200 px-3 py-2.5 dark:border-slate-700"
+          >
+            <input
+              id="cfgStream"
+              type="checkbox"
+              class="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-500 focus:ring-indigo-500/30 dark:border-slate-600 dark:bg-slate-950/70"
+            />
+            <span>
+              <span class="block text-xs font-medium text-slate-600 dark:text-slate-300">Stream responses (SSE)</span>
+              <span class="mt-0.5 block text-[11px] text-slate-400 dark:text-slate-500">
+                Paint tokens into the Output panel as they arrive instead of waiting for the full completion.
+                Tool calls are buffered until complete before the local round-trip runs.
+              </span>
+            </span>
+          </label>
+
+          <!-- Validation / status message -->
+          <p id="configError" role="alert" class="hidden text-xs text-amber-600 dark:text-amber-400"></p>
+
+          <p class="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+            These settings apply to this browser only. In live mode your prompt is sent to the configured
+            backend, and the tool round-trip is executed locally using the sandbox's mock executors.
+          </p>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
+          <div class="flex items-center gap-2">
+            <button
+              id="settingsSave"
+              type="submit"
+              class="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 dark:text-slate-950"
+            >Apply</button>
+            <button
+              id="settingsReset"
+              type="button"
+              class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+            >Reset</button>
+          </div>
+          <button
+            id="testConnection"
+            type="button"
+            class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+          >Test</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------------
+    // Agent Sandbox — mock / live prompt & tool-call tester
+    // ---------------------------------------------------------------------
+    const el = {
+      system: document.getElementById('systemInstructions'),
+      prompt: document.getElementById('promptInput'),
+      tool: document.getElementById('toolSelect'),
+      toolArg: document.getElementById('toolArg'),
+      run: document.getElementById('runBtn'),
+      cancel: document.getElementById('cancelBtn'),
+      clear: document.getElementById('clearBtn'),
+      copy: document.getElementById('copyBtn'),
+      output: document.getElementById('output'),
+      preview: document.getElementById('requestPreview'),
+      previewModeLabel: document.getElementById('previewModeLabel'),
+      sysCount: document.getElementById('sysCount'),
+      promptCount: document.getElementById('promptCount'),
+      status: document.getElementById('statusBadge'),
+      togglePretty: document.getElementById('togglePretty'),
+      themeToggle: document.getElementById('themeToggle'),
+      themeLabel: document.getElementById('themeLabel'),
+      iconSun: document.getElementById('iconSun'),
+      iconMoon: document.getElementById('iconMoon'),
+      footerNote: document.getElementById('footerNote'),
+
+      // Header mode pill (doubles as the drawer trigger)
+      modePill: document.getElementById('modePill'),
+      modePillDot: document.getElementById('modePillDot'),
+      modePillLabel: document.getElementById('modePillLabel'),
+
+      // Settings drawer
+      settingsOverlay: document.getElementById('settingsOverlay'),
+      settingsBackdrop: document.getElementById('settingsBackdrop'),
+      settingsDrawer: document.getElementById('settingsDrawer'),
+      settingsClose: document.getElementById('settingsClose'),
+      settingsForm: document.getElementById('settingsForm'),
+      settingsReset: document.getElementById('settingsReset'),
+      testConnection: document.getElementById('testConnection'),
+      modeMockBtn: document.getElementById('modeMockBtn'),
+      modeLiveBtn: document.getElementById('modeLiveBtn'),
+      cfgBaseUrl: document.getElementById('cfgBaseUrl'),
+      cfgModel: document.getElementById('cfgModel'),
+      cfgApiKey: document.getElementById('cfgApiKey'),
+      cfgKeyToggle: document.getElementById('cfgKeyToggle'),
+      cfgTemperature: document.getElementById('cfgTemperature'),
+      cfgTimeout: document.getElementById('cfgTimeout'),
+      cfgStream: document.getElementById('cfgStream'),
+      configError: document.getElementById('configError'),
+    };
+
+    // ---------------------------------------------------------------------
+    // Configuration state
+    // ---------------------------------------------------------------------
+    const STORAGE_KEY = 'agent-sandbox-config';
+
+    const DEFAULT_CONFIG = {
+      mode: 'mock',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      apiKey: '',
+      temperature: 0.2,
+      timeoutMs: 30000,
+      stream: false,
+    };
+
+    // Single source of truth. `apiKey` lives here in memory only.
+    let config = Object.assign({}, DEFAULT_CONFIG);
+
+    // UI / runtime state
+    let prettyMode = true;
+    let lastResult = null;
+    let drawerOpen = false;
+    let isRunning = false;
+    let abortCtrl = null;
+    let pendingMode = 'mock';
+
+    const MODE_ON = ['border-indigo-500', 'bg-indigo-500/10', 'text-indigo-600', 'dark:border-indigo-400', 'dark:text-indigo-300'];
+    const MODE_OFF = ['border-slate-300', 'text-slate-600', 'dark:border-slate-700', 'dark:text-slate-300'];
+
+    function isLive() {
+      return config.mode === 'live';
+    }
+
+    function normalizeBaseUrl(raw) {
+      // Strip trailing slashes and a pasted full endpoint path.
+      return String(raw || '')
+        .trim()
+        .replace(/\/+$/, '')
+        .replace(/\/chat\/completions$/i, '')
+        .replace(/\/+$/, '');
+    }
+
+    // ---------------------------------------------------------------------
+    // Persistence — everything EXCEPT the API key.
+    // ---------------------------------------------------------------------
+    function loadConfig() {
+      let stored = {};
+      try {
+        stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {};
+      } catch (e) {
+        stored = {};
+      }
+
+      const temperature = Number(stored.temperature);
+      const timeoutMs = Number(stored.timeoutMs);
+
+      config = {
+        mode: stored.mode === 'live' ? 'live' : 'mock',
+        baseUrl: typeof stored.baseUrl === 'string' && stored.baseUrl ? stored.baseUrl : DEFAULT_CONFIG.baseUrl,
+        model: typeof stored.model === 'string' && stored.model ? stored.model : DEFAULT_CONFIG.model,
+        // Never restored from storage.
+        apiKey: '',
+        temperature: Number.isFinite(temperature) ? temperature : DEFAULT_CONFIG.temperature,
+        timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_CONFIG.timeoutMs,
+        stream: !!stored.stream,
+      };
+    }
+
+    function saveConfig() {
+      try {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            mode: config.mode,
+            baseUrl: config.baseUrl,
+            model: config.model,
+            temperature: config.temperature,
+            timeoutMs: config.timeoutMs,
+            stream: config.stream,
+            // apiKey deliberately omitted: memory-only by design.
+          })
+        );
+      } catch (e) {}
+    }
+
+    // ---------------------------------------------------------------------
+    // Theme handling (class strategy on <html>)
+    // ---------------------------------------------------------------------
+    function applyTheme(theme) {
+      const root = document.documentElement;
+      const isDark = theme === 'dark';
+
+      root.classList.toggle('dark', isDark);
+
+      // In dark mode the button offers "Light"; in light mode it offers "Dark".
+      el.themeLabel.textContent = isDark ? 'Light' : 'Dark';
+      el.iconSun.classList.toggle('hidden', !isDark);
+      el.iconMoon.classList.toggle('hidden', isDark);
+
+      try { localStorage.setItem('agent-sandbox-theme', theme); } catch (e) {}
+
+      // Dot colours are set inline, so they need repainting for the new palette.
+      refreshModeUI();
+    }
+
+    function currentTheme() {
+      return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    }
+
+    el.themeToggle.addEventListener('click', () => {
+      applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+    });
+
+    // Mock tool schemas + canned responses -----------------------------
+    const TOOL_SCHEMAS = {
+      none: null,
+      web_search: {
+        name: 'web_search',
+        description: 'Search the public web and return ranked results.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The search query.' },
+            max_results: { type: 'integer', default: 5 },
+          },
+          required: ['query'],
+        },
+      },
+      code_interpreter: {
+        name: 'code_interpreter',
+        description: 'Execute Python code in a sandbox and return stdout.',
+        parameters: {
+          type: 'object',
+          properties: {
+            language: { type: 'string', enum: ['python'], default: 'python' },
+            code: { type: 'string', description: 'Source code to execute.' },
+          },
+          required: ['code'],
+        },
+      },
+      sql_query: {
+        name: 'sql_query',
+        description: 'Run a read-only SQL query against the mock database.',
+        parameters: {
+          type: 'object',
+          properties: {
+            sql: { type: 'string', description: 'A SELECT statement.' },
+            database: { type: 'string', default: 'analytics' },
+          },
+          required: ['sql'],
+        },
+      },
+    };
+
+    function buildToolCall(toolKey, arg) {
+      const schema = TOOL_SCHEMAS[toolKey];
+      if (!schema) return null;
+
+      const id = 'call_' + Math.random().toString(36).slice(2, 10);
+      let args;
+
+      if (toolKey === 'web_search') {
+        args = { query: arg || 'latest population of Tokyo', max_results: 5 };
+      } else if (toolKey === 'code_interpreter') {
+        args = {
+          language: 'python',
+          code: arg || 'print(round(13960000 / 2194, 1))',
+        };
+      } else {
+        args = { sql: arg || 'SELECT city, population FROM cities ORDER BY population DESC LIMIT 3;', database: 'analytics' };
+      }
+
+      return {
+        id,
+        type: 'function',
+        function: { name: schema.name, arguments: JSON.stringify(args) },
+        _schema: schema,
+        _args: args,
+      };
+    }
+
+    function mockToolResult(toolKey, args) {
+      if (toolKey === 'web_search') {
+        return {
+          status: 'success',
+          result: {
+            query: args.query,
+            results: [
+              { title: 'Tokyo population 2024', url: 'https://example.org/tokyo', snippet: 'Tokyo metropolitan area population is approximately 13.96 million.', rank: 1 },
+              { title: 'Greater Tokyo Area', url: 'https://example.org/greater-tokyo', snippet: 'The Greater Tokyo Area has about 37 million residents.', rank: 2 },
+            ],
+          },
+        };
+      }
+      if (toolKey === 'code_interpreter') {
+        return { status: 'success', result: { exit_code: 0, stdout: '6362.8', stderr: '' } };
+      }
+      if (toolKey === 'sql_query') {
+        return {
+          status: 'success',
+          result: {
+            columns: ['city', 'population'],
+            rows: [
+              { city: 'Tokyo', population: 13960000 },
+              { city: 'Delhi', population: 11030000 },
+              { city: 'Shanghai', population: 9290000 },
+            ],
+            row_count: 3,
+          },
+        };
+      }
+      // Unknown tool requested by a live backend: no local executor exists.
+      return {
+        status: 'success',
+        result: {
+          note: 'No local executor is registered for "' + toolKey + '". Echoing arguments.',
+          arguments: args,
+        },
+      };
+    }
+
+    function buildFinalAnswer(toolKey, args) {
+      if (toolKey === 'web_search') {
+        return 'Based on web results, the Tokyo metropolitan area population is approximately 13,960,000 people.';
+      }
+      if (toolKey === 'code_interpreter') {
+        return 'The computed population density is approximately 6,362.8 people per square kilometer.';
+      }
+      if (toolKey === 'sql_query') {
+        return 'The top city by population in the mock analytics database is Tokyo with 13,960,000 people.';
+      }
+      return 'This is the mock agent response generated without any tool call.';
+    }
+
+    // ---------------------------------------------------------------------
+    // Request construction + preview
+    // ---------------------------------------------------------------------
+    function buildRequest() {
+      const system = el.system.value.trim();
+      const userPrompt = el.prompt.value.trim();
+      const toolKey = el.tool.value;
+
+      const messages = [];
+      if (system) messages.push({ role: 'system', content: system });
+      messages.push({ role: 'user', content: userPrompt });
+
+      const toolSchema = TOOL_SCHEMAS[toolKey];
+      const model = isLive() ? (config.model || DEFAULT_CONFIG.model) : 'mock-agent-v1';
+
+      // OpenAI function-calling format: each entry needs a top-level
+      // "type" and a nested "function" object. TOOL_SCHEMAS stores only
+      // the inner { name, description, parameters } shape, so wrap it here.
+      const toolDef = toolSchema
+        ? {
+            type: 'function',
+            function: {
+              name: toolSchema.name,
+              description: toolSchema.description,
+              parameters: toolSchema.parameters,
+            },
+          }
+        : null;
+
+      const req = {
+        model,
+        messages,
+        tools: toolDef ? [toolDef] : [],
+        tool_choice: toolDef ? 'auto' : 'none',
+        temperature: config.temperature,
+        // Streaming only applies to the live backend; the offline mock
+        // resolves in one shot.
+        stream: isLive() ? !!config.stream : false,
+      };
+      return req;
+    }
+
+    function updatePreview() {
+      const req = buildRequest();
+      // The preview shows the body only — never the Authorization header.
+      const header = isLive()
+        ? '// POST ' + normalizeBaseUrl(config.baseUrl) + '/chat/completions\n'
+        : '';
+      el.preview.textContent = header + JSON.stringify(req, null, 2);
+      el.sysCount.textContent = el.system.value.length + ' chars';
+      el.promptCount.textContent = el.prompt.value.length + ' chars';
+    }
+
+    function setStatus(text, kind) {
+      const styles = {
+        ok: 'border-emerald-500/50 text-emerald-600 bg-emerald-500/10 dark:border-emerald-500/40 dark:text-emerald-300',
+        info: 'border-sky-500/50 text-sky-600 bg-sky-500/10 dark:border-sky-500/40 dark:text-sky-300',
+        warn: 'border-amber-500/50 text-amber-600 bg-amber-500/10 dark:border-amber-500/40 dark:text-amber-300',
+      };
+      el.status.className = 'text-[11px] px-2 py-0.5 rounded-full border ' + (styles[kind] || styles.info);
+      el.status.textContent = text;
+      el.status.classList.remove('hidden');
+    }
+
+    function renderOutput(obj) {
+      lastResult = obj;
+      el.output.textContent = prettyMode
+        ? JSON.stringify(obj, null, 2)
+        : JSON.stringify(obj);
+    }
+
+    // ---------------------------------------------------------------------
+    // Drawer: open / close / focus management
+    // ---------------------------------------------------------------------
+    function openDrawer() {
+      drawerOpen = true;
+      hydrateForm();
+      refreshModeUI();
+
+      el.settingsOverlay.classList.remove('is-closed');
+      el.settingsBackdrop.classList.remove('opacity-0', 'pointer-events-none');
+      el.settingsDrawer.classList.remove('translate-x-full');
+
+      setTimeout(() => {
+        try { el.modeMockBtn.focus(); } catch (e) {}
+      }, 60);
+    }
+
+    function closeDrawer() {
+      if (!drawerOpen) return;
+      drawerOpen = false;
+
+      el.settingsBackdrop.classList.add('opacity-0', 'pointer-events-none');
+      el.settingsDrawer.classList.add('translate-x-full');
+      // Visibility flips to hidden after the 300ms exit transition finishes.
+      el.settingsOverlay.classList.add('is-closed');
+
+      try { el.modePill.focus(); } catch (e) {}
+    }
+
+    function trapFocus(e) {
+      if (!drawerOpen || e.key !== 'Tab') return;
+      const nodes = el.settingsDrawer.querySelectorAll(
+        'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
+      );
+      const list = Array.prototype.filter.call(nodes, (n) => !n.disabled && n.offsetParent !== null);
+      if (!list.length) return;
+
+      const first = list[0];
+      const last = list[list.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Form <-> config plumbing
+    // ---------------------------------------------------------------------
+    function paintModeButtons(mode) {
+      pendingMode = mode === 'live' ? 'live' : 'mock';
+
+      const paint = (btn, on) => {
+        MODE_ON.forEach((c) => btn.classList.toggle(c, on));
+        MODE_OFF.forEach((c) => btn.classList.toggle(c, !on));
+        btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      };
+
+      paint(el.modeMockBtn, pendingMode === 'mock');
+      paint(el.modeLiveBtn, pendingMode === 'live');
+    }
+
+    function hydrateForm() {
+      paintModeButtons(config.mode);
+      el.cfgBaseUrl.value = config.baseUrl;
+      el.cfgModel.value = config.model;
+      el.cfgApiKey.value = config.apiKey; // in-memory value only
+      el.cfgApiKey.type = 'password';
+      el.cfgKeyToggle.textContent = 'Show';
+      el.cfgTemperature.value = String(config.temperature);
+      el.cfgTimeout.value = String(config.timeoutMs);
+      el.cfgStream.checked = !!config.stream;
+      showConfigError('');
+    }
+
+    function readFormValues() {
+      return {
+        mode: pendingMode,
+        baseUrl: normalizeBaseUrl(el.cfgBaseUrl.value),
+        model: el.cfgModel.value.trim(),
+        apiKey: el.cfgApiKey.value,
+        temperature: Number(el.cfgTemperature.value),
+        timeoutMs: Number(el.cfgTimeout.value),
+        stream: !!el.cfgStream.checked,
+      };
+    }
+
+    function validateValues(v) {
+      const errors = [];
+
+      if (v.mode === 'live') {
+        if (!v.baseUrl) errors.push('Base URL is required in live mode.');
+        else if (!/^https?:\/\//i.test(v.baseUrl)) errors.push('Base URL must start with http:// or https://.');
+        if (!v.model) errors.push('Model name is required in live mode.');
+        if (!v.apiKey) errors.push('API key is required in live mode.');
+        if (typeof location !== 'undefined' && location.protocol === 'https:' && /^http:\/\//i.test(v.baseUrl)) {
+          errors.push('An HTTPS page cannot call an HTTP base URL (mixed content is blocked).');
+        }
+      }
+
+      if (!(v.temperature >= 0 && v.temperature <= 2)) {
+        errors.push('Temperature must be between 0 and 2.');
+      }
+      if (!(v.timeoutMs >= 1000 && v.timeoutMs <= 300000)) {
+        errors.push('Timeout must be between 1000 and 300000 ms.');
+      }
+
+      return errors;
+    }
+
+    function validateConfig() {
+      return validateValues({
+        mode: config.mode,
+        baseUrl: normalizeBaseUrl(config.baseUrl),
+        model: config.model,
+        apiKey: config.apiKey,
+        temperature: config.temperature,
+        timeoutMs: config.timeoutMs,
+      });
+    }
+
+    function showConfigError(msg, kind) {
+      if (!msg) {
+        el.configError.textContent = '';
+        el.configError.classList.add('hidden');
+        return;
+      }
+      const ok = kind === 'ok';
+      el.configError.textContent = msg;
+      el.configError.classList.remove('hidden');
+      el.configError.classList.toggle('text-emerald-600', ok);
+      el.configError.classList.toggle('dark:text-emerald-400', ok);
+      el.configError.classList.toggle('text-amber-600', !ok);
+      el.configError.classList.toggle('dark:text-amber-400', !ok);
+    }
+
+    function applyForm() {
+      const v = readFormValues();
+      const errors = validateValues(v);
+      if (errors.length) {
+        showConfigError(errors.join(' '));
+        return;
+      }
+
+      config.mode = v.mode;
+      config.baseUrl = v.baseUrl || DEFAULT_CONFIG.baseUrl;
+      config.model = v.model || DEFAULT_CONFIG.model;
+      config.apiKey = v.apiKey; // memory only
+      config.temperature = v.temperature;
+      config.timeoutMs = v.timeoutMs;
+      config.stream = v.stream;
+
+      saveConfig(); // apiKey is never serialised here
+      refreshModeUI();
+      updatePreview();
+      showConfigError('');
+      setStatus(v.mode === 'live' ? 'Live mode armed' : 'Mock mode', 'info');
+      closeDrawer();
+    }
+
+    function resetConfig() {
+      config = Object.assign({}, DEFAULT_CONFIG);
+      saveConfig();
+      hydrateForm();
+      refreshModeUI();
+      updatePreview();
+      showConfigError('Reset to defaults. Enter an API key again to use live mode.', 'ok');
+    }
+
+    // ---------------------------------------------------------------------
+    // Header pill / live-vs-mock visual state
+    // ---------------------------------------------------------------------
+    function refreshModeUI() {
+      const live = isLive();
+      const dark = document.documentElement.classList.contains('dark');
+
+      // Inline colours avoid depending on runtime-generated utility classes.
+      el.modePillDot.style.backgroundColor = live
+        ? (dark ? '#38bdf8' : '#0ea5e9')
+        : (dark ? '#34d399' : '#10b981');
+      el.modePillDot.classList.toggle('animate-pulse', !live);
+      el.modePill.style.borderColor = live ? 'rgba(14,165,233,0.55)' : '';
+
+      el.modePillLabel.textContent = live ? (config.model || 'Live backend') : 'Offline mock mode';
+      el.modePill.title = live
+        ? 'Live backend: ' + normalizeBaseUrl(config.baseUrl) + ' — click to configure'
+        : 'Offline mock mode — click to configure';
+
+      el.previewModeLabel.textContent = live ? 'live' : 'mock';
+      el.previewModeLabel.style.color = live ? '#0ea5e9' : '';
+
+      el.footerNote.textContent = live
+        ? 'Agent Sandbox · Live mode posts prompts to your configured OpenAI-compatible backend. The API key is held in memory only and is lost on reload.'
+        : 'Agent Sandbox · Mock environment for testing prompts and tool calls. No network requests are made.';
+    }
+
+    // ---------------------------------------------------------------------
+    // Transports
+    // ---------------------------------------------------------------------
+
+    // Offline mock transport: behaves exactly like the original sandbox.
+    function mockTransport(req, ctx) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          resolve({
+            id: 'resp_' + Math.random().toString(36).slice(2, 12),
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: 'mock-agent-v1',
+            source: 'mock',
+            system_instructions: ctx.system || null,
+            prompt: ctx.userPrompt,
+            tool_called: ctx.toolCall
+              ? { name: ctx.toolCall.function.name, arguments: ctx.toolCall._args }
+              : null,
+            tool_result: ctx.toolCall ? mockToolResult(ctx.toolKey, ctx.toolCall._args) : null,
+            final_answer: buildFinalAnswer(ctx.toolKey, ctx.toolCall ? ctx.toolCall._args : {}),
+            usage: {
+              prompt_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4),
+              completion_tokens: 42,
+              total_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4) + 42,
+            },
+          });
+        }, 450);
+
+        if (abortCtrl) {
+          abortCtrl.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            const err = new Error('Request cancelled');
+            err.name = 'AbortError';
+            reject(err);
+          }, { once: true });
+        }
+      });
+    }
+
+    function summarizeBody(data, text) {
+      if (data && data.error) {
+        if (typeof data.error === 'string') return data.error;
+        if (data.error.message) return data.error.message;
+      }
+      if (typeof data === 'string') return data.slice(0, 200);
+      if (text) return String(text).slice(0, 200);
+      return '';
+    }
+
+    // Single POST with timeout + user-cancellable AbortController.
+    async function postJson(url, body, headers) {
+      const ctrl = new AbortController();
+      let timedOut = false;
+
+      const onUserAbort = () => { try { ctrl.abort(); } catch (e) {} };
+      if (abortCtrl) abortCtrl.signal.addEventListener('abort', onUserAbort, { once: true });
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { ctrl.abort(); } catch (e) {}
+      }, config.timeoutMs);
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        });
+
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+
+        if (!res.ok) {
+          const err = new Error('HTTP ' + res.status);
+          err.status = res.status;
+          err.body = summarizeBody(data, text);
+          throw err;
+        }
+        if (data === null) {
+          const err = new Error('Non-JSON response (HTTP ' + res.status + ')');
+          err.status = res.status;
+          err.nonJson = true;
+          err.body = (text || '').slice(0, 200);
+          throw err;
+        }
+        return data;
+      } catch (e) {
+        if (e && e.name === 'AbortError') {
+          const err = new Error(timedOut ? 'Request timed out' : 'Request cancelled');
+          err.name = 'AbortError';
+          err.timedOut = timedOut;
+          throw err;
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+        if (abortCtrl) abortCtrl.signal.removeEventListener('abort', onUserAbort);
+      }
+    }
+
+    // Single POST that consumes a Server-Sent Events stream. Content deltas
+    // are painted into the Output panel as they arrive, and any streamed
+    // tool-call fragments are accumulated (by index) until complete. Resolves
+    // to a chat-completion-shaped object so the caller can reuse the same
+    // downstream tool round-trip logic.
+    async function postStream(url, body, headers) {
+      const ctrl = new AbortController();
+      let timedOut = false;
+
+      const onUserAbort = () => { try { ctrl.abort(); } catch (e) {} };
+      if (abortCtrl) abortCtrl.signal.addEventListener('abort', onUserAbort, { once: true });
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { ctrl.abort(); } catch (e) {}
+      }, config.timeoutMs);
+
+      const result = {
+        id: null,
+        model: null,
+        usage: null,
+        message: { role: 'assistant', content: '', tool_calls: [] },
+      };
+
+      // Fold one parsed SSE chunk into the accumulator.
+      const applyDelta = (chunk) => {
+        if (!chunk) return;
+        if (chunk.id) result.id = chunk.id;
+        if (chunk.model) result.model = chunk.model;
+        if (chunk.usage) result.usage = chunk.usage;
+
+        const choice = chunk.choices && chunk.choices[0];
+        if (!choice) return;
+        const delta = choice.delta || {};
+
+        if (typeof delta.role === 'string') result.message.role = delta.role;
+
+        if (typeof delta.content === 'string' && delta.content) {
+          result.message.content += delta.content;
+          // Incremental paint so the user sees live generation.
+          el.output.textContent = result.message.content;
+        }
+
+        // Tool calls arrive as fragmented deltas keyed by `index`; stitch the
+        // id/name/arguments fragments together until the call is complete.
+        if (delta.tool_calls) {
+          delta.tool_calls.forEach((d) => {
+            const idx = typeof d.index === 'number' ? d.index : result.message.tool_calls.length;
+            if (!result.message.tool_calls[idx]) {
+              result.message.tool_calls[idx] = {
+                id: '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+              };
+            }
+            const target = result.message.tool_calls[idx];
+            if (d.id) target.id = d.id;
+            if (d.type) target.type = d.type;
+            if (d.function) {
+              if (d.function.name) target.function.name += d.function.name;
+              if (d.function.arguments) target.function.arguments += d.function.arguments;
+            }
+          });
+        }
+      };
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          let data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+          const err = new Error('HTTP ' + res.status);
+          err.status = res.status;
+          err.body = summarizeBody(data, text);
+          throw err;
+        }
+
+        if (!res.body || typeof res.body.getReader !== 'function') {
+          const err = new Error('Streaming is not supported by this response.');
+          err.status = res.status;
+          err.body = 'The backend did not return a readable stream.';
+          throw err;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let doneStreaming = false;
+
+        while (!doneStreaming) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE events are newline-delimited. A network chunk can split a
+          // line, so only consume complete lines and keep the tail buffered.
+          let nl;
+          while ((nl = buffer.indexOf('\n')) >= 0) {
+            let line = buffer.slice(0, nl);
+            buffer = buffer.slice(nl + 1);
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            if (!line || line.startsWith(':')) continue;       // blank / comment / keep-alive
+            if (!line.startsWith('data:')) continue;           // event / id / retry fields
+
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') { doneStreaming = true; break; }
+
+            let chunk = null;
+            try { chunk = JSON.parse(payload); } catch (e) { chunk = null; }
+            applyDelta(chunk);
+          }
+        }
+
+        return result;
+      } catch (e) {
+        if (e && e.name === 'AbortError') {
+          const err = new Error(timedOut ? 'Request timed out' : 'Request cancelled');
+          err.name = 'AbortError';
+          err.timedOut = timedOut;
+          throw err;
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+        if (abortCtrl) abortCtrl.signal.removeEventListener('abort', onUserAbort);
+      }
+    }
+
+    // Live transport against an OpenAI-compatible /chat/completions endpoint.
+    async function liveTransport(req, ctx) {
+      const url = normalizeBaseUrl(config.baseUrl) + '/chat/completions';
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + config.apiKey,
+      };
+
+      const started = Date.now();
+      const messages = req.messages.slice();
+      const MAX_ITER = 3;
+
+      let completionId = null;
+      let usedModel = req.model;
+      let usage = null;
+      let toolCalled = null;
+      let toolResult = null;
+      let finalText = '';
+
+      // Streaming is opt-in via req.stream (set by buildRequest).
+      const useStream = !!req.stream;
+
+      for (let i = 0; i < MAX_ITER; i++) {
+        const body = {
+          model: req.model,
+          messages,
+          temperature: req.temperature,
+        };
+        if (req.tools && req.tools.length) {
+          body.tools = req.tools;
+          body.tool_choice = req.tool_choice || 'auto';
+        }
+
+        let msg;
+        if (useStream) {
+          body.stream = true;
+          // Clear the panel so this round-trip's tokens paint from scratch.
+          el.output.textContent = '';
+          const streamed = await postStream(url, body, headers);
+          completionId = streamed.id || completionId;
+          usedModel = streamed.model || usedModel;
+          usage = streamed.usage || usage;
+          msg = streamed.message;
+        } else {
+          const data = await postJson(url, body, headers);
+          completionId = data.id || completionId;
+          usedModel = data.model || usedModel;
+          usage = data.usage || usage;
+          const choice = data.choices && data.choices[0];
+          msg = choice && choice.message;
+        }
+
+        const calls = (msg && msg.tool_calls) || [];
+
+        if (!calls.length) {
+          finalText = (msg && msg.content) || '';
+          break;
+        }
+
+        // Preserve the assistant message EXACTLY as returned by the backend,
+        // including the complete tool_calls array and any other fields it
+        // carried. Rebuilding it drops data the API expects to see again.
+        messages.push(Object.assign({ role: 'assistant' }, msg));
+
+        // OpenAI/DeepSeek require one role:"tool" message per tool_call_id,
+        // immediately after the assistant message and before anything else.
+        // Execute every call in this turn (not just the first) so the counts
+        // always match.
+        for (let c = 0; c < calls.length; c++) {
+          const call = calls[c];
+          const name = (call.function && call.function.name) || 'unknown';
+          let parsedArgs = {};
+          try {
+            parsedArgs = JSON.parse((call.function && call.function.arguments) || '{}');
+          } catch (e) {
+            parsedArgs = {};
+          }
+
+          const result = mockToolResult(name, parsedArgs);
+          const content = typeof result === 'string' ? result : JSON.stringify(result);
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content,
+          });
+
+          // Record the first tool round-trip for the result summary.
+          if (!toolCalled) {
+            toolCalled = { name, arguments: parsedArgs };
+            toolResult = result;
+          }
+        }
+      }
+
+      if (!finalText && toolCalled) {
+        finalText = buildFinalAnswer(toolCalled.name, toolCalled.arguments);
+      }
+
+      return {
+        id: completionId || ('resp_' + Math.random().toString(36).slice(2, 12)),
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: usedModel,
+        source: 'live',
+        latency_ms: Date.now() - started,
+        system_instructions: ctx.system || null,
+        prompt: ctx.userPrompt,
+        tool_called: toolCalled,
+        tool_result: toolResult,
+        final_answer: finalText,
+        usage: usage || {
+          prompt_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4),
+          completion_tokens: 42,
+          total_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4) + 42,
+        },
+      };
+    }
+
+    // ---------------------------------------------------------------------
+    // Error normalisation
+    // ---------------------------------------------------------------------
+    function describeError(err) {
+      if (err && err.name === 'AbortError') {
+        if (err.timedOut) {
+          return {
+            message: 'Request timed out after ' + config.timeoutMs + ' ms.',
+            hint: 'Raise the timeout in Settings, or check that the backend is reachable.',
+          };
+        }
+        return { message: 'Request cancelled.', hint: 'The in-flight request was aborted.' };
+      }
+
+      const status = err && err.status;
+      const detail = err && err.body ? String(err.body).slice(0, 200) : '';
+
+      if (status === 401 || status === 403) {
+        return {
+          message: 'Authentication failed (HTTP ' + status + ').',
+          hint: 'Check the API key. Keys are held in memory only and must be re-entered after a reload.',
+        };
+      }
+      if (status === 404) {
+        return {
+          message: 'Endpoint not found (HTTP 404).',
+          hint: 'Check the Base URL — it usually ends in /v1, not /v1/chat/completions.',
+        };
+      }
+      if (status === 429) {
+        return {
+          message: 'Rate limited (HTTP 429).',
+          hint: 'Wait and retry, or check the account quota.' + (detail ? ' Server said: ' + detail : ''),
+        };
+      }
+      if (status) {
+        return {
+          message: 'Backend error (HTTP ' + status + ').',
+          hint: detail || 'See the browser console for the raw response.',
+        };
+      }
+      if (err instanceof TypeError) {
+        return {
+          message: 'Network or CORS failure.',
+          hint: 'A custom Authorization header forces a preflight request. If the backend does not answer OPTIONS with the right CORS headers, the browser blocks the call and reports a generic failure. Try a backend that returns Access-Control-Allow-Origin, or put a small proxy in front of it.',
+        };
+      }
+      return { message: (err && err.message) || 'Unknown error.', hint: 'See the browser console for details.' };
+    }
+
+    // ---------------------------------------------------------------------
+    // Run orchestration
+    // ---------------------------------------------------------------------
+    function setBusy(busy) {
+      isRunning = busy;
+      el.run.disabled = busy;
+      el.run.style.opacity = busy ? '0.6' : '';
+      el.run.style.cursor = busy ? 'not-allowed' : '';
+      el.cancel.classList.toggle('hidden', !busy);
+      el.cancel.classList.toggle('inline-flex', busy);
+    }
+
+    async function runAgent() {
+      if (isRunning) return;
+
+      const system = el.system.value.trim();
+      const userPrompt = el.prompt.value.trim();
+      const toolKey = el.tool.value;
+      const toolArg = el.toolArg.value.trim();
+
+      if (!userPrompt) {
+        setStatus('No prompt', 'warn');
+        renderOutput({ error: 'Prompt is empty.', hint: 'Enter a prompt before running the agent.' });
+        return;
+      }
+
+      if (isLive()) {
+        const errors = validateConfig();
+        if (errors.length) {
+          setStatus('Config needed', 'warn');
+          openDrawer();
+          showConfigError(errors.join(' '));
+          renderOutput({ error: 'Live mode is not configured.', details: errors });
+          return;
+        }
+      }
+
+      const toolCall = buildToolCall(toolKey, toolArg);
+      const ctx = { toolKey, toolArg, system, userPrompt, toolCall };
+      const req = buildRequest();
+
+      abortCtrl = new AbortController();
+      setBusy(true);
+      setStatus(isLive() ? 'Calling backend…' : 'Running…', 'info');
+      el.output.textContent = isLive() ? '// Contacting live backend…' : '// Running mock agent…';
+
+      try {
+        const response = isLive()
+          ? await liveTransport(req, ctx)
+          : await mockTransport(req, ctx);
+
+        renderOutput(response);
+        setStatus(isLive() ? 'Live OK' : 'Success', 'ok');
+      } catch (err) {
+        const d = describeError(err);
+        setStatus(err && err.name === 'AbortError' ? 'Cancelled' : 'Failed', 'warn');
+        renderOutput({
+          error: d.message,
+          hint: d.hint,
+          mode: config.mode,
+        });
+      } finally {
+        abortCtrl = null;
+        setBusy(false);
+      }
+    }
+
+    function clearAll() {
+      el.system.value = '';
+      el.prompt.value = '';
+      el.tool.value = 'none';
+      el.toolArg.value = '';
+      el.output.textContent = '// Output will appear here as formatted JSON.';
+      lastResult = null;
+      el.status.classList.add('hidden');
+      updatePreview();
+    }
+
+    async function copyJson() {
+      if (!lastResult) {
+        setStatus('Nothing to copy', 'warn');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(lastResult, null, 2));
+        setStatus('Copied', 'ok');
+      } catch (e) {
+        setStatus('Copy failed', 'warn');
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Connection probe (read-only, no token cost)
+    // ---------------------------------------------------------------------
+    async function testConnection() {
+      const v = readFormValues();
+      const errors = validateValues(v);
+      if (errors.length) {
+        showConfigError(errors.join(' '));
+        return;
+      }
+
+      showConfigError('');
+      const prev = el.testConnection.textContent;
+      el.testConnection.disabled = true;
+      el.testConnection.textContent = 'Testing…';
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, Math.min(v.timeoutMs, 15000));
+
+      try {
+        const res = await fetch(normalizeBaseUrl(v.baseUrl) + '/models', {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + v.apiKey },
+          signal: ctrl.signal,
+        });
+        if (res.ok) {
+          showConfigError('Connection OK (HTTP ' + res.status + '). The backend is reachable.', 'ok');
+          setStatus('Backend reachable', 'ok');
+        } else {
+          showConfigError('Backend responded with HTTP ' + res.status + '. Check the key, base URL, and model.');
+        }
+      } catch (e) {
+        const d = describeError(e);
+        showConfigError(d.message + ' ' + d.hint);
+      } finally {
+        clearTimeout(timer);
+        el.testConnection.disabled = false;
+        el.testConnection.textContent = prev;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Event wiring
+    // ---------------------------------------------------------------------
+    el.run.addEventListener('click', runAgent);
+    el.clear.addEventListener('click', clearAll);
+    el.copy.addEventListener('click', copyJson);
+    el.cancel.addEventListener('click', () => {
+      if (abortCtrl) abortCtrl.abort();
+    });
+
+    // Header pill toggles the drawer
+    el.modePill.addEventListener('click', () => {
+      if (drawerOpen) closeDrawer();
+      else openDrawer();
+    });
+
+    el.settingsClose.addEventListener('click', closeDrawer);
+    el.settingsBackdrop.addEventListener('click', closeDrawer);
+
+    el.modeMockBtn.addEventListener('click', () => {
+      paintModeButtons('mock');
+      showConfigError('');
+    });
+    el.modeLiveBtn.addEventListener('click', () => {
+      paintModeButtons('live');
+      showConfigError('');
+    });
+
+    el.cfgKeyToggle.addEventListener('click', () => {
+      const showing = el.cfgApiKey.type === 'text';
+      el.cfgApiKey.type = showing ? 'password' : 'text';
+      el.cfgKeyToggle.textContent = showing ? 'Show' : 'Hide';
+    });
+
+    el.settingsForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      applyForm();
+    });
+
+    el.settingsReset.addEventListener('click', resetConfig);
+    el.testConnection.addEventListener('click', testConnection);
+
+    // Live validation feedback while editing
+    el.settingsForm.addEventListener('input', () => {
+      const errs = validateValues(readFormValues());
+      showConfigError(errs.length ? errs.join(' ') : '');
+    });
+
+    el.togglePretty.addEventListener('click', () => {
+      prettyMode = !prettyMode;
+      if (lastResult) renderOutput(lastResult);
+    });
+
+    ['input', 'change'].forEach((evt) => {
+      el.system.addEventListener(evt, updatePreview);
+      el.prompt.addEventListener(evt, updatePreview);
+      el.tool.addEventListener(evt, updatePreview);
+      el.toolArg.addEventListener(evt, updatePreview);
+    });
+
+    // Keyboard: Escape closes the drawer / cancels a run; Ctrl+Enter runs.
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (drawerOpen) {
+          e.preventDefault();
+          closeDrawer();
+          return;
+        }
+        if (isRunning && abortCtrl) {
+          e.preventDefault();
+          abortCtrl.abort();
+          return;
+        }
+      }
+
+      trapFocus(e);
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (!drawerOpen) runAgent();
+      }
+    });
+
+    // Init
+    loadConfig();            // loads persisted config; apiKey always starts empty
+    applyTheme(currentTheme());
+    refreshModeUI();
+    updatePreview();
+  </script>
+</body>
+</html>
