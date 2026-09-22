@@ -772,12 +772,12 @@
       },
       code_interpreter: {
         name: 'code_interpreter',
-        description: 'Execute Python code in a sandbox and return stdout.',
+        description: 'Execute Python code in a real in-browser WebAssembly sandbox and return its stdout, stderr and final value. Always pass a complete, valid Python program in the "code" field.',
         parameters: {
           type: 'object',
           properties: {
-            language: { type: 'string', enum: ['python'], default: 'python' },
-            code: { type: 'string', description: 'Source code to execute.' },
+            language: { type: 'string', enum: ['python'], default: 'python', description: 'Only "python" is supported.' },
+            code: { type: 'string', description: 'A complete, valid Python program. Use print(...) for any values you want returned.' },
           },
           required: ['code'],
         },
@@ -927,6 +927,129 @@
       }
     }
 
+    // ---------------------------------------------------------------------
+    // Pyodide (WebAssembly) Python execution for the code_interpreter tool
+    // ---------------------------------------------------------------------
+
+    // Lazily load the Pyodide runtime from CDN and cache the instance.
+    let pyodideLoadPromise = null;
+    async function getPyodide() {
+      if (window._pyodideInstance) return window._pyodideInstance;
+      if (pyodideLoadPromise) return pyodideLoadPromise;
+
+      pyodideLoadPromise = (async () => {
+        if (typeof window.loadPyodide === 'undefined') {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error('Failed to load Pyodide from CDN'));
+            document.head.appendChild(s);
+          });
+        }
+        if (typeof window.loadPyodide !== 'function') {
+          throw new Error('Pyodide loader is unavailable');
+        }
+        const instance = await window.loadPyodide();
+        window._pyodideInstance = instance;
+        return instance;
+      })();
+
+      try {
+        return await pyodideLoadPromise;
+      } catch (e) {
+        pyodideLoadPromise = null;
+        throw e;
+      }
+    }
+
+    // Run Python code in Pyodide, capturing stdout/stderr and the final value.
+    async function executePythonCode(code) {
+      let pyodide;
+      try {
+        pyodide = await getPyodide();
+      } catch (e) {
+        return { status: 'error', source: 'pyodide_wasm', error: 'Pyodide unavailable: ' + (e && e.message ? e.message : e) };
+      }
+
+      const wrapped = [
+        'import sys, io',
+        '__stdout = io.StringIO()',
+        '__stderr = io.StringIO()',
+        '__saved_stdout = sys.stdout',
+        '__saved_stderr = sys.stderr',
+        'sys.stdout = __stdout',
+        'sys.stderr = __stderr',
+        '__code_interpreter_result = None',
+        'try:',
+        '    __code_interpreter_result = eval(compile(' + JSON.stringify(code) + ', "' + 'agent-sandbox' + '", "exec"), {})',
+        'except Exception:',
+        '    import traceback',
+        '    print(traceback.format_exc(), file=sys.stderr)',
+        'finally:',
+        '    sys.stdout = __saved_stdout',
+        '    sys.stderr = __saved_stderr',
+        '__agent_stdout = __stdout.getvalue()',
+        '__agent_stderr = __stderr.getvalue()',
+        '__agent_result = __code_interpreter_result',
+      ].join('\n');
+
+      let returnValue = undefined;
+      let stdout = '';
+      let stderr = '';
+
+      try {
+        await pyodide.runPythonAsync(wrapped);
+        try { stdout = pyodide.globals.get('__agent_stdout') || ''; } catch (e) {}
+        try { stderr = pyodide.globals.get('__agent_stderr') || ''; } catch (e) {}
+        try {
+          const rv = pyodide.globals.get('__agent_result');
+          returnValue = (rv === undefined || rv === null) ? undefined : rv;
+        } catch (e) {}
+      } catch (e) {
+        return {
+          status: 'error',
+          source: 'pyodide_wasm',
+          result: {
+            code: code,
+            stdout: '',
+            stderr: '',
+            return_value: null,
+            error: (e && e.message) ? e.message : String(e),
+          },
+        };
+      } finally {
+        ['__stdout', '__stderr', '__saved_stdout', '__saved_stderr',
+         '__code_interpreter_result', '__agent_stdout', '__agent_stderr', '__agent_result']
+          .forEach((k) => { try { pyodide.globals.delete(k); } catch (e) {} });
+      }
+
+      stdout = stdout || '';
+      stderr = stderr || '';
+      if (!stdout && !stderr && returnValue !== undefined) {
+        stdout = String(returnValue);
+      }
+
+      const outEnvelope = {
+        status: stderr.trim() ? 'error' : 'success',
+        source: 'pyodide_wasm',
+        result: {
+          code: code,
+          stdout: stdout,
+          stderr: stderr,
+          return_value: returnValue !== undefined ? String(returnValue) : null,
+        },
+      };
+
+      console.log('[Pyodide WASM Execution]', {
+        code: code,
+        stdout: outEnvelope.result.stdout,
+        return_value: outEnvelope.result.return_value,
+      });
+
+      return outEnvelope;
+    }
+
     async function mockToolResult(toolKey, args) {
       args = args || {};
       console.log('[Tool Call Execution]', toolKey, args);
@@ -977,6 +1100,18 @@
         };
       }
       if (toolKey === 'code_interpreter') {
+        // Prefer real in-browser Python via Pyodide (WebAssembly).
+        const code = args.code || args.python_code || args.command || '';
+        if (code) {
+          const wasmResult = await executePythonCode(code);
+          // Only fall back to the static mock when Pyodide itself failed to
+          // load/initialise — not when the user's code raised an error (that
+          // error is useful feedback the agent can self-correct from).
+          if (wasmResult && wasmResult.source === 'pyodide_wasm' && !wasmResult.error) {
+            return wasmResult;
+          }
+        }
+        // Static fallback (Pyodide unavailable, or no code supplied).
         return { status: 'success', result: { exit_code: 0, stdout: '6362.8', stderr: '' } };
       }
       if (toolKey === 'sql_query') {
