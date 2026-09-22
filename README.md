@@ -20,6 +20,16 @@ Designed for testing and evaluating OpenAI-compatible models (such as DeepSeek, 
   * Prompt cache hit/miss telemetry, end-to-end latency, and token generation speed metrics.
   * Instant export to formatted JSON and Markdown.
 
+### Tool Dispatch & Dual-Mode Mechanics
+
+The **Active Tool** selector controls both mock simulation and live schema dispatch:
+
+- **Mock Mode**: Simulates canned function calls and mock tool observations locally without contacting external APIs or spending tokens.
+- **Live Mode**: Dynamically attaches the selected tool's JSON Schema to the outgoing API request (`tools` array):
+  - **None (no tool)**: Leaves the `tools` array empty (`tools: []`). The model functions as a pure conversational LLM without triggering tool-call loops.
+  - **Code Interpreter**: Injects the Python execution schema. When the model emits a `tool_calls` payload, the sandbox intercepts it and executes the code locally in the browser via Pyodide (WASM), returning standard output back into the conversation context.
+  - **Web Search / SQL Query**: Injects the corresponding JSON schema to test and observe model reasoning, argument formatting, and schema compliance.
+
 ---
 
 ## Quickstart & Local Deployment
@@ -86,7 +96,7 @@ The model can autonomously invoke any of the following tools:
 | `code_interpreter` | Pyodide (WASM) | Evaluates Python expressions and scripts inside an isolated browser WebAssembly sandbox. |
 | `sql_query` | In-Memory Mock | Emulates SQL query execution over sample tabular databases. |
 
-> **Important Note on Tool Dispatch (Live Mode)**: For the model to receive tool definitions and execute function calls, ensure the **Mock Tool** selector in the UI is set to any specific tool (e.g., Code Interpreter, Web Search, or SQLite) or multi-tool profile rather than `None (no tool)`. When set to `None`, no tool schema array is appended to the API payload, and the model will operate purely as a direct completion LLM.
+> **Important Note on Tool Dispatch (Live Mode)**: For the model to receive tool definitions and execute function calls, ensure the **Active Tool** selector in the UI is set to any specific tool (e.g., Code Interpreter, Web Search, or SQLite) or multi-tool profile rather than `None (no tool)`. When set to `None`, no tool schema array is appended to the API payload, and the model will operate purely as a direct completion LLM.
 
 ### 3. Inspect and Debug
 * Click the **History: N messages** button to inspect the full conversation payload.
