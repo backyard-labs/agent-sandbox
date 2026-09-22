@@ -472,6 +472,22 @@
             </p>
           </div>
 
+          <!-- Agent loop -->
+          <div>
+            <label for="cfgMaxSteps" class="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Max Agent Steps</label>
+            <input
+              id="cfgMaxSteps"
+              type="number"
+              min="1"
+              max="12"
+              step="1"
+              class="w-full rounded-lg bg-slate-50 border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none px-3 py-2 text-sm font-mono text-slate-800 dark:bg-slate-950/70 dark:border-slate-700 dark:text-slate-200"
+            />
+            <p class="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+              Iteration ceiling for the multi-step agent loop (default 5). Search and code tools run locally each turn.
+            </p>
+          </div>
+
           <!-- Numeric params -->
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -675,6 +691,7 @@
       cfgSearchKeyToggle: document.getElementById('cfgSearchKeyToggle'),
       cfgTemperature: document.getElementById('cfgTemperature'),
       cfgTimeout: document.getElementById('cfgTimeout'),
+      cfgMaxSteps: document.getElementById('cfgMaxSteps'),
       cfgStream: document.getElementById('cfgStream'),
       configError: document.getElementById('configError'),
     };
@@ -693,7 +710,11 @@
       timeoutMs: 30000,
       stream: false,
       searchApiKey: '',
+      maxSteps: 5,
     };
+
+    // Iteration ceiling for the multi-step agent loop.
+    const MAX_AGENT_STEPS = 5;
 
     // Single source of truth. `apiKey` lives here in memory only.
     let config = Object.assign({}, DEFAULT_CONFIG);
@@ -738,6 +759,7 @@
 
       const temperature = Number(stored.temperature);
       const timeoutMs = Number(stored.timeoutMs);
+      const maxSteps = Number(stored.maxSteps);
 
       config = {
         mode: stored.mode === 'live' ? 'live' : 'mock',
@@ -750,6 +772,7 @@
         stream: !!stored.stream,
         // Never restored from storage: memory-only like the main API key.
         searchApiKey: '',
+        maxSteps: Number.isFinite(maxSteps) && maxSteps > 0 ? maxSteps : DEFAULT_CONFIG.maxSteps,
       };
     }
 
@@ -764,6 +787,7 @@
             temperature: config.temperature,
             timeoutMs: config.timeoutMs,
             stream: config.stream,
+            maxSteps: config.maxSteps,
             // apiKey deliberately omitted: memory-only by design.
           })
         );
@@ -1213,28 +1237,34 @@
         messages.push({ role: 'user', content: userPrompt });
       }
 
-      const toolSchema = TOOL_SCHEMAS[toolKey];
       const model = isLive() ? (config.model || DEFAULT_CONFIG.model) : 'mock-agent-v1';
 
       // OpenAI function-calling format: each entry needs a top-level
       // "type" and a nested "function" object. TOOL_SCHEMAS stores only
       // the inner { name, description, parameters } shape, so wrap it here.
-      const toolDef = toolSchema
-        ? {
-            type: 'function',
-            function: {
-              name: toolSchema.name,
-              description: toolSchema.description,
-              parameters: toolSchema.parameters,
-            },
-          }
-        : null;
+      const wrapTool = (schema) => ({
+        type: 'function',
+        function: {
+          name: schema.name,
+          description: schema.description,
+          parameters: schema.parameters,
+        },
+      });
+
+      // Expose EVERY tool so the model can chain freely (search -> compute).
+      // "None" disables tools entirely; any specific selection still advises
+      // the full toolset so the agent can multi-step between them.
+      const enabledSchemas = Object.keys(TOOL_SCHEMAS)
+        .map((k) => TOOL_SCHEMAS[k])
+        .filter((s) => !!s);
+
+      const tools = toolKey === 'none' ? [] : enabledSchemas.map(wrapTool);
 
       const req = {
         model,
         messages,
-        tools: toolDef ? [toolDef] : [],
-        tool_choice: toolDef ? 'auto' : 'none',
+        tools: tools,
+        tool_choice: tools.length ? 'auto' : 'none',
         temperature: config.temperature,
         // Streaming only applies to the live backend; the offline mock
         // resolves in one shot.
@@ -1445,6 +1475,7 @@
       el.cfgKeyToggle.textContent = 'Show';
       el.cfgTemperature.value = String(config.temperature);
       el.cfgTimeout.value = String(config.timeoutMs);
+      el.cfgMaxSteps.value = String(config.maxSteps);
       el.cfgStream.checked = !!config.stream;
       el.cfgSearchApiKey.value = config.searchApiKey; // in-memory value only
       el.cfgSearchApiKey.type = 'password';
@@ -1460,6 +1491,7 @@
         apiKey: el.cfgApiKey.value,
         temperature: Number(el.cfgTemperature.value),
         timeoutMs: Number(el.cfgTimeout.value),
+        maxSteps: Number(el.cfgMaxSteps.value),
         stream: !!el.cfgStream.checked,
         searchApiKey: el.cfgSearchApiKey.value,
       };
@@ -1483,6 +1515,9 @@
       }
       if (!(v.timeoutMs >= 1000 && v.timeoutMs <= 300000)) {
         errors.push('Timeout must be between 1000 and 300000 ms.');
+      }
+      if (!(v.maxSteps >= 1 && v.maxSteps <= 12)) {
+        errors.push('Max agent steps must be between 1 and 12.');
       }
 
       return errors;
@@ -1529,6 +1564,7 @@
       config.temperature = v.temperature;
       config.timeoutMs = v.timeoutMs;
       config.stream = v.stream;
+      config.maxSteps = Number.isFinite(v.maxSteps) && v.maxSteps > 0 ? v.maxSteps : DEFAULT_CONFIG.maxSteps;
       config.searchApiKey = v.searchApiKey; // memory only
 
       saveConfig(); // apiKey is never serialised here
@@ -1846,7 +1882,8 @@
 
       const started = Date.now();
       const messages = req.messages.slice();
-      const MAX_ITER = 3;
+      // Configurable iteration ceiling for the multi-step agent loop.
+      const MAX_STEPS = Number(config.maxSteps) > 0 ? Number(config.maxSteps) : MAX_AGENT_STEPS;
 
       let completionId = null;
       let usedModel = req.model;
@@ -1854,11 +1891,15 @@
       let toolCalled = null;
       let toolResult = null;
       let finalText = '';
+      let stepCount = 0;
+      let hitCeiling = false;
 
       // Streaming is opt-in via req.stream (set by buildRequest).
       const useStream = !!req.stream;
 
-      for (let i = 0; i < MAX_ITER; i++) {
+      while (stepCount < MAX_STEPS) {
+        stepCount++;
+        setStatus('Live Step ' + stepCount + '/' + MAX_STEPS + '…', 'info');
         const body = {
           model: req.model,
           messages,
@@ -1937,6 +1978,13 @@
         }
       }
 
+      // If we exhausted the step ceiling, surface a clear warning so the user
+      // knows the loop stopped early rather than finishing naturally.
+      if (!finalText && stepCount >= MAX_STEPS) {
+        hitCeiling = true;
+        finalText = 'Max reasoning steps reached (' + MAX_STEPS + '). Stopping and returning the accumulated tool results above.';
+        setStatus('Max steps reached', 'warn');
+      }
       if (!finalText && toolCalled) {
         finalText = buildFinalAnswer(toolCalled.name, toolCalled.arguments);
       }
@@ -1958,6 +2006,9 @@
         tool_called: toolCalled,
         tool_result: toolResult,
         final_answer: finalText,
+        steps: stepCount,
+        max_steps: MAX_STEPS,
+        hit_step_ceiling: hitCeiling,
         usage: usage || {
           prompt_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4),
           completion_tokens: 42,
