@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent Sandbox — Prompt & Tool Call Tester</title>
+  <title>Agent Sandbox — Prompt &amp; Tool Call Tester</title>
   <script>
     // Apply saved theme before paint to avoid a flash of the wrong theme.
     (function () {
@@ -75,7 +75,7 @@
         <div class="h-9 w-9 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-400 grid place-items-center font-bold text-slate-950">A</div>
         <div>
           <h1 class="text-lg font-semibold leading-tight">Agent Sandbox</h1>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Test prompts & mock tool calls</p>
+          <p class="text-xs text-slate-500 dark:text-slate-400">In-browser multi-step agent testbed (Offline Mock &amp; Live BYOK)</p>
         </div>
       </div>
 
@@ -89,8 +89,8 @@
           title="Configure runtime settings"
           class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white/70 px-2.5 py-1 font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900 transition dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
         >
-          <span id="modePillDot" class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse dark:bg-emerald-400"></span>
-          <span id="modePillLabel">Offline mock mode</span>
+          <span id="modePillDot" aria-hidden="true" class="text-[10px] leading-none text-emerald-500 animate-pulse dark:text-emerald-400">○</span>
+          <span id="modePillLabel">MOCK · Offline</span>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5 opacity-70">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -1421,6 +1421,8 @@
     function closeDrawer() {
       if (!drawerOpen) return;
       drawerOpen = false;
+      // Discard any un-applied mode toggle preview in the header capsule.
+      refreshModeUI();
 
       el.settingsBackdrop.classList.add('opacity-0', 'pointer-events-none');
       el.settingsDrawer.classList.add('translate-x-full');
@@ -1464,6 +1466,9 @@
 
       paint(el.modeMockBtn, pendingMode === 'mock');
       paint(el.modeLiveBtn, pendingMode === 'live');
+
+      // Keep the header capsule in sync the moment the pending mode changes.
+      refreshModeUI();
     }
 
     function hydrateForm() {
@@ -1597,15 +1602,23 @@
       const live = isLive();
       const dark = document.documentElement.classList.contains('dark');
 
+      // While the drawer is open the pill previews the PENDING selection so the
+      // header flips immediately on toggle, before Apply is pressed.
+      const pillLive = drawerOpen ? pendingMode === 'live' : live;
+
       // Inline colours avoid depending on runtime-generated utility classes.
-      el.modePillDot.style.backgroundColor = live
+      el.modePillDot.style.color = pillLive
         ? (dark ? '#38bdf8' : '#0ea5e9')
         : (dark ? '#34d399' : '#10b981');
-      el.modePillDot.classList.toggle('animate-pulse', !live);
-      el.modePill.style.borderColor = live ? 'rgba(14,165,233,0.55)' : '';
+      el.modePillDot.classList.toggle('animate-pulse', !pillLive);
+      el.modePill.style.borderColor = pillLive ? 'rgba(14,165,233,0.55)' : '';
 
-      el.modePillLabel.textContent = live ? (config.model || 'Live backend') : 'Offline mock mode';
-      el.modePill.title = live
+      // Capsule reads "● LIVE · <model>" or "○ MOCK · Offline" (gear follows).
+      el.modePillDot.textContent = pillLive ? '●' : '○';
+      el.modePillLabel.textContent = pillLive
+        ? 'LIVE · ' + (config.model || 'Live backend')
+        : 'MOCK · Offline';
+      el.modePill.title = pillLive
         ? 'Live backend: ' + normalizeBaseUrl(config.baseUrl) + ' — click to configure'
         : 'Offline mock mode — click to configure';
 
