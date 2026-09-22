@@ -391,8 +391,8 @@
               >Show</button>
             </div>
             <p class="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-              Optional. Enables real web search via Tavily. Without a key, the sandbox falls back to the free
-              DuckDuckGo Instant Answer API, then to static mock results. Held in memory only.
+              Optional. Enables real web search via Tavily. Without a key, the sandbox falls back to a free,
+              CORS-friendly Wikipedia search, then to static mock results. Held in memory only.
             </p>
           </div>
 
@@ -711,7 +711,7 @@
     }
 
     // ---------------------------------------------------------------------
-    // Live web search: Tavily (keyed) -> DuckDuckGo (free) -> static mock
+    // Live web search: Wikipedia (free) -> Tavily (keyed) -> static mock
     // ---------------------------------------------------------------------
 
     // fetch() with its own timeout; always clears the timer.
@@ -759,84 +759,103 @@
       }
     }
 
-    // Free live fallback via the DuckDuckGo Instant Answer API.
-    async function searchDuckDuckGo(query) {
+    // Free live search via Wikipedia: full-text search -> REST intro summary.
+    //
+    // IMPORTANT: both calls are plain GETs with NO custom headers. Adding
+    // headers (e.g. Api-User-Agent) would force a CORS preflight (OPTIONS)
+    // that these endpoints do not answer, breaking the request in-browser.
+    // `origin=*` (action=query) and the rest_v1 endpoint are already CORS-free.
+    async function searchWikipedia(query) {
       try {
-        const url = 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) +
-          '&format=json&no_html=1&skip_disambig=1';
-        const res = await fetchWithTimeout(url, { method: 'GET' }, 15000);
-        if (!res.ok) return null;
+        // 1. Resolve the query to its best matching title via full-text search.
+        const searchUrl = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' +
+          encodeURIComponent(query) + '&srlimit=1&utf8=&format=json&origin=*';
+        const searchRes = await fetch(searchUrl, { method: 'GET' });
+        if (!searchRes.ok) return null;
 
-        const data = await res.json();
-        const results = [];
+        const searchData = await searchRes.json();
+        // Take the top hit's title; return null when the search yields nothing.
+        const title = searchData && searchData.query && searchData.query.search && searchData.query.search[0]
+          ? searchData.query.search[0].title
+          : null;
+        if (!title) return null;
 
-        if (data.AbstractText) {
-          results.push({
-            title: data.Heading || 'Instant answer',
-            url: data.AbstractURL || '',
-            snippet: data.AbstractText,
-            rank: results.length + 1,
-          });
-        }
+        // 2. Fetch the full intro summary via the CORS-free REST endpoint.
+        const summaryUrl = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title);
+        const summaryRes = await fetch(summaryUrl, { method: 'GET' });
+        if (!summaryRes.ok) return null;
 
-        const topics = Array.isArray(data.RelatedTopics) ? data.RelatedTopics : [];
-        for (let i = 0; i < topics.length && results.length < 5; i++) {
-          const t = topics[i];
-          if (t && t.Text && t.FirstURL) {
-            results.push({ title: t.Text.slice(0, 90), url: t.FirstURL, snippet: t.Text, rank: results.length + 1 });
-          } else if (t && Array.isArray(t.Topics)) {
-            for (let j = 0; j < t.Topics.length && results.length < 5; j++) {
-              const s = t.Topics[j];
-              if (s && s.Text && s.FirstURL) {
-                results.push({ title: s.Text.slice(0, 90), url: s.FirstURL, snippet: s.Text, rank: results.length + 1 });
-              }
-            }
-          }
-        }
+        const summaryData = await summaryRes.json();
+        if (!summaryData || !summaryData.extract) return null;
 
-        if (!results.length) return null;
-        return { query: query, source: 'duckduckgo', results: results };
+        console.log('[Wikipedia Live Result]', summaryData.extract);
+
+        const pageUrl = (summaryData.content_urls && summaryData.content_urls.desktop)
+          ? summaryData.content_urls.desktop.page
+          : ('https://en.wikipedia.org/wiki/' + encodeURIComponent(summaryData.title || title));
+
+        return {
+          status: 'success',
+          source: 'wikipedia',
+          result: {
+            query: query,
+            results: [
+              {
+                title: summaryData.title || title,
+                url: pageUrl,
+                snippet: summaryData.extract,
+                rank: 1,
+              },
+            ],
+          },
+        };
       } catch (e) {
         return null;
       }
     }
 
-    // Try the keyed API first, then the free fallback. Anything failing
-    // (offline, CORS, non-2xx, empty results) resolves to null.
-    async function realWebSearch(query) {
-      const tavily = await searchTavily(query);
-      if (tavily) return tavily;
-      const ddg = await searchDuckDuckGo(query);
-      if (ddg) return ddg;
-      return null;
-    }
-
     async function mockToolResult(toolKey, args) {
+      args = args || {};
+      console.log('[Tool Call Execution]', toolKey, args);
+
       if (toolKey === 'web_search') {
-        // 1. Real search: Tavily (if keyed) then DuckDuckGo.
+        // Accept both argument spellings the model may emit.
+        const query = args.query || args.search_query || '';
+
+        // 1. ALWAYS attempt the free Wikipedia search first, so a web_search
+        //    never silently degrades to the static mock while online.
         try {
-          const live = await realWebSearch(args.query);
-          if (live) {
-            return {
-              status: 'success',
-              source: live.source,
-              result: {
-                query: live.query,
-                answer: live.answer || null,
-                results: live.results,
-              },
-            };
+          const wiki = await searchWikipedia(query);
+          if (wiki && wiki.result && wiki.result.results && wiki.result.results.length) {
+            // searchWikipedia already returns the full success envelope.
+            return wiki;
           }
         } catch (e) {
-          // Fall through to the static mock below.
+          // Fall through to the optional keyed API, then the static mock.
         }
 
-        // 2. Offline / failed -> static mock results.
+        // 2. Optional keyed Tavily search, used only when a key is configured.
+        if (config.searchApiKey) {
+          try {
+            const tavily = await searchTavily(query);
+            if (tavily && tavily.results && tavily.results.length) {
+              return {
+                status: 'success',
+                source: 'tavily',
+                result: { query: tavily.query, answer: tavily.answer || null, results: tavily.results },
+              };
+            }
+          } catch (e) {
+            // Fall through to the static mock.
+          }
+        }
+
+        // 3. ONLY if everything above failed -> static mock results.
         return {
           status: 'success',
           source: 'mock',
           result: {
-            query: args.query,
+            query: query,
             results: [
               { title: 'Tokyo population 2024', url: 'https://example.org/tokyo', snippet: 'Tokyo metropolitan area population is approximately 13.96 million.', rank: 1 },
               { title: 'Greater Tokyo Area', url: 'https://example.org/greater-tokyo', snippet: 'The Greater Tokyo Area has about 37 million residents.', rank: 2 },
