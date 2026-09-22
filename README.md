@@ -120,6 +120,12 @@ The model can autonomously invoke any of the following tools:
 
 ---
 
+## Attribution & AI Assistance
+
+This project was conceived, architected, and directed by Backyard Labs as an open-source testbed and learning lab. The single-file implementation, UI layout, and initial documentation were developed through iterative pairing with AI coding assistants (Cline and DeepSeek). The codebase has been manually reviewed and verified for developer testing, experimental reasoning loops, and client-side sandboxing.
+
+---
+
 ## License
 
 MIT License. Free for open research, testing, and extension.
