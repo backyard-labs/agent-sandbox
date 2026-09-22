@@ -233,10 +233,29 @@
             <span id="statusBadge" class="hidden text-[11px] px-2 py-0.5 rounded-full border"></span>
           </div>
           <div class="flex items-center gap-2">
+            <button id="copyMdBtn" title="Copy just the final answer text" class="text-xs text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md px-2 py-1 transition dark:text-slate-400 dark:hover:text-slate-200 dark:border-slate-700">Copy Markdown</button>
+            <button id="downloadBtn" title="Download the completion payload as JSON" class="text-xs text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md px-2 py-1 transition dark:text-slate-400 dark:hover:text-slate-200 dark:border-slate-700">Download JSON</button>
             <button id="togglePretty" class="text-xs text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md px-2 py-1 transition dark:text-slate-400 dark:hover:text-slate-200 dark:border-slate-700">Raw / Pretty</button>
           </div>
         </div>
         <pre id="output" class="scroll-thin flex-1 overflow-auto p-4 text-xs sm:text-[13px] font-mono leading-relaxed whitespace-pre text-slate-800 min-h-[20rem] dark:text-slate-200">// Output will appear here as formatted JSON.</pre>
+
+        <!-- Telemetry bar: latency + token accounting for the last result -->
+        <div
+          id="telemetryBar"
+          class="hidden flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 px-4 py-2 text-[11px] font-mono text-slate-500 dark:border-slate-800 dark:text-slate-400"
+        >
+          <span>Latency: <span id="tmLatency" class="text-slate-700 dark:text-slate-200">&mdash;</span></span>
+          <span>Tokens/s: <span id="tmTps" class="text-slate-700 dark:text-slate-200">&mdash;</span></span>
+          <span>
+            Tokens:
+            <span id="tmPrompt" class="text-slate-700 dark:text-slate-200">&mdash;</span>
+            <span id="tmCached" class="hidden text-emerald-600 dark:text-emerald-400"></span>
+            prompt + <span id="tmCompletion" class="text-slate-700 dark:text-slate-200">&mdash;</span>
+            completion = <span id="tmTotal" class="text-slate-700 dark:text-slate-200">&mdash;</span> total
+          </span>
+          <span id="tmModel" class="ml-auto text-slate-400 dark:text-slate-500"></span>
+        </div>
       </section>
 
     </div>
@@ -487,6 +506,16 @@
       clear: document.getElementById('clearBtn'),
       copy: document.getElementById('copyBtn'),
       output: document.getElementById('output'),
+      telemetryBar: document.getElementById('telemetryBar'),
+      tmLatency: document.getElementById('tmLatency'),
+      tmTps: document.getElementById('tmTps'),
+      tmPrompt: document.getElementById('tmPrompt'),
+      tmCached: document.getElementById('tmCached'),
+      tmCompletion: document.getElementById('tmCompletion'),
+      tmTotal: document.getElementById('tmTotal'),
+      tmModel: document.getElementById('tmModel'),
+      downloadBtn: document.getElementById('downloadBtn'),
+      copyMdBtn: document.getElementById('copyMdBtn'),
       preview: document.getElementById('requestPreview'),
       previewModeLabel: document.getElementById('previewModeLabel'),
       sysCount: document.getElementById('sysCount'),
@@ -972,6 +1001,105 @@
       el.output.textContent = prettyMode
         ? JSON.stringify(obj, null, 2)
         : JSON.stringify(obj);
+      updateTelemetry(obj);
+    }
+
+    // Execution metrics: latency, tokens/sec and token accounting. Hidden when
+    // the payload carries neither usage nor latency (e.g. error envelopes).
+    function updateTelemetry(obj) {
+      if (!el.telemetryBar) return;
+
+      const usage = obj && obj.usage;
+      const latency = obj && typeof obj.latency_ms === 'number' ? obj.latency_ms : null;
+      const promptTokens = usage && typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null;
+      const completionTokens = usage && typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null;
+      const totalTokens = usage && typeof usage.total_tokens === 'number'
+        ? usage.total_tokens
+        : ((promptTokens || 0) + (completionTokens || 0)) || null;
+
+      // Cached prompt tokens, if the backend reports them (OpenAI-style).
+      let cached = null;
+      if (usage && usage.prompt_tokens_details && typeof usage.prompt_tokens_details.cached_tokens === 'number') {
+        cached = usage.prompt_tokens_details.cached_tokens;
+      } else if (usage && typeof usage.cached_tokens === 'number') {
+        cached = usage.cached_tokens;
+      }
+
+      if (!usage && latency === null) {
+        el.telemetryBar.classList.add('hidden');
+        el.telemetryBar.classList.remove('flex');
+        return;
+      }
+
+      el.telemetryBar.classList.remove('hidden');
+      el.telemetryBar.classList.add('flex');
+
+      el.tmLatency.textContent = latency !== null ? latency + ' ms' : '\u2014';
+
+      if (latency && completionTokens) {
+        el.tmTps.textContent = (completionTokens / (latency / 1000)).toFixed(1) + ' tok/s';
+      } else {
+        el.tmTps.textContent = '\u2014';
+      }
+
+      el.tmPrompt.textContent = promptTokens !== null ? promptTokens : '\u2014';
+
+      if (cached && cached > 0) {
+        el.tmCached.textContent = '(' + cached + ' cached)';
+        el.tmCached.classList.remove('hidden');
+      } else {
+        el.tmCached.textContent = '';
+        el.tmCached.classList.add('hidden');
+      }
+
+      el.tmCompletion.textContent = completionTokens !== null ? completionTokens : '\u2014';
+      el.tmTotal.textContent = totalTokens !== null ? totalTokens : '\u2014';
+      el.tmModel.textContent = (obj && obj.model) ? obj.model : '';
+    }
+
+    // Save the last completion payload as a timestamped JSON file.
+    function downloadJson() {
+      if (!lastResult) {
+        setStatus('Nothing to download', 'warn');
+        return;
+      }
+      try {
+        const blob = new Blob([JSON.stringify(lastResult, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        a.href = url;
+        a.download = 'agent-sandbox-response-' + ts + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setStatus('Downloaded', 'ok');
+      } catch (e) {
+        setStatus('Download failed', 'warn');
+      }
+    }
+
+    // Copy only the final answer text for quick pasting elsewhere.
+    async function copyMarkdown() {
+      let text = '';
+      if (lastResult) {
+        if (typeof lastResult.final_answer === 'string') {
+          text = lastResult.final_answer;
+        } else if (lastResult.choices && lastResult.choices[0] && lastResult.choices[0].message) {
+          text = lastResult.choices[0].message.content || '';
+        }
+      }
+      if (!text) {
+        setStatus('Nothing to copy', 'warn');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus('Markdown copied', 'ok');
+      } catch (e) {
+        setStatus('Copy failed', 'warn');
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -1184,6 +1312,7 @@
 
     // Offline mock transport: behaves exactly like the original sandbox.
     function mockTransport(req, ctx) {
+      const started = Date.now();
       return new Promise((resolve, reject) => {
         const timer = setTimeout(async () => {
           // May hit the live web, so it is awaited.
@@ -1197,6 +1326,7 @@
             created: Math.floor(Date.now() / 1000),
             model: 'mock-agent-v1',
             source: 'mock',
+            latency_ms: Date.now() - started,
             system_instructions: ctx.system || null,
             prompt: ctx.userPrompt,
             tool_called: ctx.toolCall
@@ -1781,6 +1911,9 @@
       prettyMode = !prettyMode;
       if (lastResult) renderOutput(lastResult);
     });
+
+    el.downloadBtn.addEventListener('click', downloadJson);
+    el.copyMdBtn.addEventListener('click', copyMarkdown);
 
     ['input', 'change'].forEach((evt) => {
       el.system.addEventListener(evt, updatePreview);
