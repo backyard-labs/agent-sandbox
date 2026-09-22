@@ -1491,7 +1491,7 @@
         apiKey: el.cfgApiKey.value,
         temperature: Number(el.cfgTemperature.value),
         timeoutMs: Number(el.cfgTimeout.value),
-        maxSteps: Number(el.cfgMaxSteps.value),
+        maxSteps: parseInt(el.cfgMaxSteps.value, 10),
         stream: !!el.cfgStream.checked,
         searchApiKey: el.cfgSearchApiKey.value,
       };
@@ -1516,7 +1516,12 @@
       if (!(v.timeoutMs >= 1000 && v.timeoutMs <= 300000)) {
         errors.push('Timeout must be between 1000 and 300000 ms.');
       }
-      if (!(v.maxSteps >= 1 && v.maxSteps <= 12)) {
+      // Only flag max steps when a concrete, out-of-range value is supplied.
+      // A missing value (e.g. from validateConfig) falls back to the default
+      // and must NOT block the run.
+      const isMaxStepsValid = v.maxSteps === undefined || v.maxSteps === null ||
+        (Number.isInteger(v.maxSteps) && v.maxSteps >= 1 && v.maxSteps <= 12);
+      if (!isMaxStepsValid) {
         errors.push('Max agent steps must be between 1 and 12.');
       }
 
@@ -1531,6 +1536,7 @@
         apiKey: config.apiKey,
         temperature: config.temperature,
         timeoutMs: config.timeoutMs,
+        maxSteps: config.maxSteps,
       });
     }
 
