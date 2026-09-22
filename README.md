@@ -86,6 +86,8 @@ The model can autonomously invoke any of the following tools:
 | `code_interpreter` | Pyodide (WASM) | Evaluates Python expressions and scripts inside an isolated browser WebAssembly sandbox. |
 | `sql_query` | In-Memory Mock | Emulates SQL query execution over sample tabular databases. |
 
+> **Important Note on Tool Dispatch (Live Mode)**: For the model to receive tool definitions and execute function calls, ensure the **Mock Tool** selector in the UI is set to any specific tool (e.g., Code Interpreter, Web Search, or SQLite) or multi-tool profile rather than `None (no tool)`. When set to `None`, no tool schema array is appended to the API payload, and the model will operate purely as a direct completion LLM.
+
 ### 3. Inspect and Debug
 * Click the **History: N messages** button to inspect the full conversation payload.
 * Review exact tool parameters, raw standard output captures, and intermediate model thoughts.
