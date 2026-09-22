@@ -211,6 +211,13 @@
               >
                 Copy JSON
               </button>
+              <button
+                id="clearHistoryBtn"
+                class="inline-flex items-center gap-2 rounded-lg border border-slate-300 hover:border-slate-400 text-slate-600 text-sm px-4 py-2 transition hover:text-slate-900 dark:border-slate-700 dark:hover:border-slate-500 dark:text-slate-300 dark:hover:text-white"
+              >
+                Clear History
+              </button>
+              <span id="historyCount" class="ml-auto self-center text-xs font-mono text-slate-400 dark:text-slate-500">History: 0 messages</span>
             </div>
           </div>
         </div>
@@ -505,6 +512,8 @@
       cancel: document.getElementById('cancelBtn'),
       clear: document.getElementById('clearBtn'),
       copy: document.getElementById('copyBtn'),
+      clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+      historyCount: document.getElementById('historyCount'),
       output: document.getElementById('output'),
       telemetryBar: document.getElementById('telemetryBar'),
       tmLatency: document.getElementById('tmLatency'),
@@ -581,6 +590,9 @@
     let isRunning = false;
     let abortCtrl = null;
     let pendingMode = 'mock';
+
+    // Multi-turn conversation state. Persists across runs until cleared.
+    let conversationHistory = [];
 
     const MODE_ON = ['border-indigo-500', 'bg-indigo-500/10', 'text-indigo-600', 'dark:border-indigo-400', 'dark:text-indigo-300'];
     const MODE_OFF = ['border-slate-300', 'text-slate-600', 'dark:border-slate-700', 'dark:text-slate-300'];
@@ -942,7 +954,14 @@
 
       const messages = [];
       if (system) messages.push({ role: 'system', content: system });
-      messages.push({ role: 'user', content: userPrompt });
+
+      // Multi-turn: send the accumulated conversation when present, otherwise
+      // fall back to the current single turn.
+      if (conversationHistory.length) {
+        conversationHistory.forEach((m) => messages.push(m));
+      } else {
+        messages.push({ role: 'user', content: userPrompt });
+      }
 
       const toolSchema = TOOL_SCHEMAS[toolKey];
       const model = isLive() ? (config.model || DEFAULT_CONFIG.model) : 'mock-agent-v1';
@@ -1320,6 +1339,21 @@
             ? await mockToolResult(ctx.toolKey, ctx.toolCall._args)
             : null;
 
+          const finalAnswer = buildFinalAnswer(ctx.toolKey, ctx.toolCall ? ctx.toolCall._args : {});
+
+          // Mirror the live flow into conversation history: assistant
+          // tool-call turn, tool response, then the final assistant answer.
+          if (ctx.toolCall) {
+            const tc = { id: ctx.toolCall.id, type: 'function', function: ctx.toolCall.function };
+            conversationHistory.push({ role: 'assistant', content: null, tool_calls: [tc] });
+            conversationHistory.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult),
+            });
+          }
+          conversationHistory.push({ role: 'assistant', content: finalAnswer });
+
           resolve({
             id: 'resp_' + Math.random().toString(36).slice(2, 12),
             object: 'chat.completion',
@@ -1333,7 +1367,7 @@
               ? { name: ctx.toolCall.function.name, arguments: ctx.toolCall._args }
               : null,
             tool_result: toolResult,
-            final_answer: buildFinalAnswer(ctx.toolKey, ctx.toolCall ? ctx.toolCall._args : {}),
+            final_answer: finalAnswer,
             usage: {
               prompt_tokens: Math.ceil((ctx.system.length + ctx.userPrompt.length) / 4),
               completion_tokens: 42,
@@ -1614,7 +1648,9 @@
         // Preserve the assistant message EXACTLY as returned by the backend,
         // including the complete tool_calls array and any other fields it
         // carried. Rebuilding it drops data the API expects to see again.
-        messages.push(Object.assign({ role: 'assistant' }, msg));
+        const assistantToolMsg = Object.assign({ role: 'assistant' }, msg);
+        messages.push(assistantToolMsg);
+        conversationHistory.push(assistantToolMsg);
 
         // OpenAI/DeepSeek require one role:"tool" message per tool_call_id,
         // immediately after the assistant message and before anything else.
@@ -1631,13 +1667,17 @@
           }
 
           const result = await mockToolResult(name, parsedArgs);
+          // Send the EXACT JSON-stringified content of the live execution
+          // result back to the model (never a cached/mock/hardcoded string).
           const content = typeof result === 'string' ? result : JSON.stringify(result);
 
-          messages.push({
+          const toolResponseMsg = {
             role: 'tool',
             tool_call_id: call.id,
             content,
-          });
+          };
+          messages.push(toolResponseMsg);
+          conversationHistory.push(toolResponseMsg);
 
           // Record the first tool round-trip for the result summary.
           if (!toolCalled) {
@@ -1649,6 +1689,11 @@
 
       if (!finalText && toolCalled) {
         finalText = buildFinalAnswer(toolCalled.name, toolCalled.arguments);
+      }
+
+      // Persist the assistant's final answer as the closing turn.
+      if (finalText) {
+        conversationHistory.push({ role: 'assistant', content: finalText });
       }
 
       return {
@@ -1758,6 +1803,10 @@
         }
       }
 
+      // Record this user turn, then build the request from accumulated history.
+      conversationHistory.push({ role: 'user', content: userPrompt });
+      updateHistoryUI();
+
       const toolCall = buildToolCall(toolKey, toolArg);
       const ctx = { toolKey, toolArg, system, userPrompt, toolCall };
       const req = buildRequest();
@@ -1785,6 +1834,7 @@
       } finally {
         abortCtrl = null;
         setBusy(false);
+        updateHistoryUI();
       }
     }
 
@@ -1810,6 +1860,21 @@
       } catch (e) {
         setStatus('Copy failed', 'warn');
       }
+    }
+
+    // Reflect the current conversation length in the controls bar.
+    function updateHistoryUI() {
+      if (!el.historyCount) return;
+      const n = conversationHistory.length;
+      el.historyCount.textContent = 'History: ' + n + ' message' + (n === 1 ? '' : 's');
+    }
+
+    // Reset multi-turn state.
+    function clearHistory() {
+      conversationHistory = [];
+      updateHistoryUI();
+      updatePreview();
+      setStatus('History cleared', 'info');
     }
 
     // ---------------------------------------------------------------------
@@ -1859,6 +1924,7 @@
     el.run.addEventListener('click', runAgent);
     el.clear.addEventListener('click', clearAll);
     el.copy.addEventListener('click', copyJson);
+    el.clearHistoryBtn.addEventListener('click', clearHistory);
     el.cancel.addEventListener('click', () => {
       if (abortCtrl) abortCtrl.abort();
     });
@@ -1949,6 +2015,7 @@
     loadConfig();            // loads persisted config; apiKey always starts empty
     applyTheme(currentTheme());
     refreshModeUI();
+    updateHistoryUI();
     updatePreview();
   </script>
 </body>
