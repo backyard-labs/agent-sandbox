@@ -80,14 +80,28 @@ To host the sandbox online with zero infrastructure:
 ## Configuration & Usage
 
 ### 1. Configure the Runtime
-* Click the model/settings pill in the header (e.g., `deepseek-chat ⚙`).
-* Enter your **API Base URL** (defaults to `https://api.deepseek.com`).
+* Click the model/settings pill in the header (e.g., `gpt-4o-mini ⚙`) to open the Runtime Configuration drawer.
+* Enter your **API Base URL** (defaults to `https://api.openai.com/v1`).
 * Enter your **API Key** (stored strictly in browser memory; never written to `localStorage` or disk).
-* Set **Max Agent Steps** (default: `5`, range: `1–12`).
+* Optionally adjust **Model**, **Temperature** (`0–2`), **Timeout (ms)** (`1000–300000`) and **Max Agent Steps** (default: `5`, range: `1–12`).
 * Enable **Stream responses (SSE)** for real-time token streaming.
 * Click **Apply**.
 
-### 2. Available Tools
+### 2. Operational Mode & Readiness
+
+Switch modes at any time with the inline **[Mock | Live]** segmented control in the header. It commits immediately — no drawer round-trip and no **Apply** required — and stays in sync with the mode radios in the Runtime Configuration drawer.
+
+The **Output** panel carries a state-aware readiness badge:
+
+| Badge | Meaning |
+| :--- | :--- |
+| `Mock mode` | Runs the built-in mock agent. Prompts never leave your browser. |
+| `Live (Needs Key)` | Live mode is selected but no API key is set. Add one in the drawer to become dispatch-ready. |
+| `Live Ready` | Live mode is selected and an API key is present, so **Run Agent** will dispatch. |
+
+**Credentials are decoupled from saving.** Applying an empty or cleared API key succeeds — the key is simply treated as absent when the request is built, and the badge flips to `Live (Needs Key)` immediately. The block lives on **Run Agent** only: in that state, clicking **Run Agent** cancels the dispatch and opens the Runtime Configuration drawer with `API key is required in live mode.`
+
+### 3. Available Tools
 The model can autonomously invoke any of the following tools:
 
 | Tool | Engine | Description |
@@ -98,11 +112,17 @@ The model can autonomously invoke any of the following tools:
 
 > **Important Note on Tool Dispatch (Live Mode)**: For the model to receive tool definitions and execute function calls, ensure the **Active Tool** selector in the UI is set to any specific tool (e.g., Code Interpreter, Web Search, or SQLite) or multi-tool profile rather than `None (no tool)`. When set to `None`, no tool schema array is appended to the API payload, and the model will operate purely as a direct completion LLM.
 
-### 3. Inspect and Debug
+### 4. Inspect and Debug
 * Click the **History: N messages** button to inspect the full conversation payload.
 * Review exact tool parameters, raw standard output captures, and intermediate model thoughts.
 * Delete or prune specific messages to test agent recovery or simulate edge cases.
 * Use **Copy Markdown** or **Download JSON** to export traces for evaluation reports.
+
+### 5. Interface Controls
+* **Theme toggle** (header, beside the mode switch) flips the light/dark palette; the choice persists in `localStorage`.
+* **Raw / Pretty** flips the output panel between minified and indented JSON.
+* **Request Preview** shows the exact request body that would be sent, labelled `mock` or `live`.
+* **Cancel** aborts an in-flight live request; **Clear All** / **Clear History** reset the transcript.
 
 ---
 

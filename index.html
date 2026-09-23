@@ -21,13 +21,6 @@
       darkMode: 'class',
       theme: {
         extend: {
-          colors: {
-            ink: {
-              900: '#0b1020',
-              800: '#111827',
-              700: '#1f2937',
-            },
-          },
           fontFamily: {
             mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
           },
@@ -92,7 +85,7 @@
             type="button"
             role="radio"
             aria-checked="true"
-            title="Built-in offline mock agent — no network calls"
+            title="Built-in mock agent — prompts stay in your browser; the web_search tool still queries the live Wikipedia API."
             class="rounded-full px-2.5 py-1 font-medium transition bg-indigo-600 text-white shadow-sm dark:bg-cyan-400 dark:text-slate-950"
           >Mock</button>
           <button
@@ -346,7 +339,7 @@
     </div>
 
     <p id="footerNote" class="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
-      Agent Sandbox · Mock environment for testing prompts and tool calls. No network requests are made.
+      Agent Sandbox · Mock environment for testing prompts and tool calls. Prompts stay in your browser; the web_search tool still queries the live Wikipedia API.
     </p>
   </main>
 
@@ -399,17 +392,17 @@
                 role="radio"
                 aria-checked="true"
                 class="rounded-lg border px-3 py-2 text-xs font-medium transition border-indigo-500 bg-indigo-500/10 text-indigo-600 dark:border-indigo-400 dark:text-indigo-300"
-              >Offline mock</button>
+              >Mock</button>
               <button
                 id="modeLiveBtn"
                 type="button"
                 role="radio"
                 aria-checked="false"
                 class="rounded-lg border px-3 py-2 text-xs font-medium transition border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300"
-              >Live backend</button>
+              >Live</button>
             </div>
             <p class="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-              Mock mode never touches the network. Live mode posts to your OpenAI-compatible endpoint.
+              Mock mode keeps prompts in your browser — the web_search tool still queries the live Wikipedia API. Live mode posts prompts to your OpenAI-compatible endpoint.
             </p>
           </div>
 
@@ -698,7 +691,6 @@
       deleteSessionBtn: document.getElementById('deleteSessionBtn'),
 
       // Header: mode segmented toggle + model settings capsule
-      navModeToggle: document.getElementById('navModeToggle'),
       navModeMock: document.getElementById('navModeMock'),
       navModeLive: document.getElementById('navModeLive'),
       modePill: document.getElementById('modePill'),
@@ -1679,10 +1671,10 @@
       });
 
       el.modeBadge.title = !live
-        ? 'Offline mock mode — no network requests are made.'
+        ? 'Mock mode — prompts stay in your browser; the web_search tool still queries Wikipedia.'
         : (hasKey
-          ? 'Live mode is armed and an API key is present for this session.'
-          : 'Live mode is armed but no API key is set. Open settings to add one.');
+          ? 'Live mode is ready and an API key is present for this session.'
+          : 'Live mode is selected but needs an API key. Open settings to add one.');
     }
 
     // Commit a mode change straight from the navbar — no drawer round-trip.
@@ -1726,7 +1718,7 @@
 
       el.footerNote.textContent = live
         ? 'Agent Sandbox · Live mode posts prompts to your configured OpenAI-compatible backend. The API key is held in memory only and is lost on reload.'
-        : 'Agent Sandbox · Mock environment for testing prompts and tool calls. No network requests are made.';
+        : 'Agent Sandbox · Mock environment for testing prompts and tool calls. Prompts stay in your browser; the web_search tool still queries the live Wikipedia API.';
     }
 
     // ---------------------------------------------------------------------
